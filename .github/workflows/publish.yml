@@ -1,0 +1,55 @@
+name: Publish
+
+# Publishes @blockhash/mancer-sdk to npm through npm's trusted publishing: npm trusts this workflow of this repository by
+# its OIDC token, so no npm token is stored anywhere. The package's trusted publisher on npmjs.com names this repository,
+# this file (publish.yml) and the environment below. A version already on npm is skipped, so a run can be repeated.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: npm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      # trusted publishing needs npm 11.5.1 or newer; Node 22 ships npm 10
+      - run: npm install -g npm@11.21.0
+      - run: npm ci
+      - name: The tag names the package's version
+        if: github.ref_type == 'tag'
+        run: |
+          for p in packages/sdk; do
+            v="v$(node -p "require('./$p/package.json').version")"
+            if [ "$v" != "$GITHUB_REF_NAME" ]; then echo "$p is $v, the tag is $GITHUB_REF_NAME"; exit 1; fi
+          done
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: npm run scan
+      - run: npm run pack-check
+      - name: Publish the SDK
+        run: |
+          for p in packages/sdk; do
+            name="$(node -p "require('./$p/package.json').name")"
+            version="$(node -p "require('./$p/package.json').version")"
+            if npm view "$name@$version" version >/dev/null 2>&1; then
+              echo "$name@$version is on npm already: skipped"
+            else
+              npm publish --provenance --access public -w "$p"
+            fi
+          done

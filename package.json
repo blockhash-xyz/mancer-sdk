@@ -1,0 +1,24 @@
+{
+  "name": "mancer-sdk",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Mancer's TypeScript SDK and an example trading bot",
+  "license": "MIT",
+  "workspaces": [
+    "packages/sdk",
+    "examples/trading-bot"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "typecheck": "npm run typecheck --workspaces",
+    "test": "npm test --workspaces",
+    "build": "npm run build --workspaces --if-present",
+    "scan": "node scripts/npm/scan.mjs .",
+    "pack-check": "node scripts/npm/pack-check.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  }
+}

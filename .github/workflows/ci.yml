@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Typecheck the SDK and the example bot
+        run: npm run typecheck
+      - name: Test the SDK and the example bot
+        run: npm test
+      - name: Build the SDK
+        run: npm run build
+      - name: Scan the tree for text that is not public
+        run: npm run scan
+      - name: Pack the SDK, install the tarball fresh and run it in plain Node
+        run: npm run pack-check

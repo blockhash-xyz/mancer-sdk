@@ -1,0 +1,411 @@
+{
+  "about": "Shared fixtures for the order signatures: each case is what a form holds and the orders it signs, by the site's formulas (packages/web/components/trade/limit-form.tsx, recurring-form.tsx), worked out with exact integers. parity.test.ts builds the app's terms and typed data and the site's typed data (packages/web/lib/order-typed-data.ts) from them and holds all three equal.",
+  "chainId": 4663,
+  "contract": "0xf300A6549Cd46206629e6719d3f258022d7F2da1",
+  "maker": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+  "signerKey": "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+  "epoch": "0x9a1c7f00000000000000000000000000000000000000000000000000000000ab",
+  "tokens": {
+    "WETH": {
+      "address": "0x0bd7d308f8e1639fab988df18a8011f41eacad73",
+      "symbol": "WETH",
+      "decimals": 18
+    },
+    "USDG": {
+      "address": "0x5fc5360d0400a0fd4f2af552add042d716f1d168",
+      "symbol": "USDG",
+      "decimals": 6
+    },
+    "MANCER": {
+      "address": "0xc72f232a6869e6cf34dc06129affd07f8a2a246a",
+      "symbol": "MANCER",
+      "decimals": 18
+    },
+    "PONS": {
+      "address": "0x39dbed3a2bd333467115de45665cc57f813c4571",
+      "symbol": "PONS",
+      "decimals": 18
+    },
+    "XBTC": {
+      "address": "0x8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b",
+      "symbol": "XBTC",
+      "decimals": 8
+    }
+  },
+  "limits": [
+    {
+      "name": "a limit selling ether for dollars, read naturally (USDG per WETH), expiring in a day",
+      "form": {
+        "mode": "limit",
+        "spend": "WETH",
+        "buy": "USDG",
+        "amount": "1.5",
+        "rate": "2400",
+        "trigger": "",
+        "band": "20",
+        "marketBuyPerSell": 2330.18,
+        "flipRate": false,
+        "expiry": 1800086400,
+        "feeBps": 15
+      },
+      "legs": [
+        {
+          "terms": {
+            "amountPerFill": "1500000000000000000",
+            "totalFills": 1,
+            "everySec": 0,
+            "startAt": 0,
+            "expiry": 1800086400,
+            "minOutPerFill": "3600000000",
+            "triggerOutPerFill": "0",
+            "maxOutPerFill": "0",
+            "maxFeeBps": 15
+          },
+          "nonce": "68056755101507387020778618259276769721",
+          "ocoGroup": null
+        }
+      ]
+    },
+    {
+      "name": "a limit buying ether with dollars, typed the other way round (USDG per WETH), never expiring",
+      "form": {
+        "mode": "limit",
+        "spend": "USDG",
+        "buy": "WETH",
+        "amount": "1000",
+        "rate": "2500",
+        "trigger": "",
+        "band": "20",
+        "marketBuyPerSell": 0.000429,
+        "flipRate": true,
+        "expiry": 0,
+        "feeBps": 15
+      },
+      "legs": [
+        {
+          "terms": {
+            "amountPerFill": "1000000000",
+            "totalFills": 1,
+            "everySec": 0,
+            "startAt": 0,
+            "expiry": 0,
+            "minOutPerFill": "400000000000000000",
+            "triggerOutPerFill": "0",
+            "maxOutPerFill": "0",
+            "maxFeeBps": 15
+          },
+          "nonce": "79722068309135401508687105903759019565",
+          "ocoGroup": null
+        }
+      ]
+    },
+    {
+      "name": "a limit buying a meme with ether, whose natural price is a zero run, so it is typed as MANCER per WETH",
+      "form": {
+        "mode": "limit",
+        "spend": "WETH",
+        "buy": "MANCER",
+        "amount": "0.25",
+        "rate": "114155251",
+        "trigger": "",
+        "band": "20",
+        "marketBuyPerSell": 114155251,
+        "flipRate": false,
+        "expiry": 1800604800,
+        "feeBps": 30
+      },
+      "legs": [
+        {
+          "terms": {
+            "amountPerFill": "250000000000000000",
+            "totalFills": 1,
+            "everySec": 0,
+            "startAt": 0,
+            "expiry": 1800604800,
+            "minOutPerFill": "28538812750000000000000000",
+            "triggerOutPerFill": "0",
+            "maxOutPerFill": "0",
+            "maxFeeBps": 30
+          },
+          "nonce": "19687771963078438538178283988973880038",
+          "ocoGroup": null
+        }
+      ]
+    },
+    {
+      "name": "a stop selling ether, its floor 20% under the trigger",
+      "form": {
+        "mode": "stop",
+        "spend": "WETH",
+        "buy": "USDG",
+        "amount": "2",
+        "rate": "",
+        "trigger": "2000",
+        "band": "20",
+        "marketBuyPerSell": 2330.18,
+        "flipRate": false,
+        "expiry": 1800003600,
+        "feeBps": 15
+      },
+      "legs": [
+        {
+          "terms": {
+            "amountPerFill": "2000000000000000000",
+            "totalFills": 1,
+            "everySec": 0,
+            "startAt": 0,
+            "expiry": 1800003600,
+            "minOutPerFill": "3200000000",
+            "triggerOutPerFill": "4000000000",
+            "maxOutPerFill": "0",
+            "maxFeeBps": 15
+          },
+          "nonce": "90554975080611974970118693014769001609",
+          "ocoGroup": null
+        }
+      ]
+    },
+    {
+      "name": "a stop buying ether with dollars, typed USDG per WETH, a 5% band",
+      "form": {
+        "mode": "stop",
+        "spend": "USDG",
+        "buy": "WETH",
+        "amount": "600",
+        "rate": "",
+        "trigger": "3000",
+        "band": "5",
+        "marketBuyPerSell": 0.000429,
+        "flipRate": true,
+        "expiry": 0,
+        "feeBps": 15
+      },
+      "legs": [
+        {
+          "terms": {
+            "amountPerFill": "600000000",
+            "totalFills": 1,
+            "everySec": 0,
+            "startAt": 0,
+            "expiry": 0,
+            "minOutPerFill": "190000000000000000",
+            "triggerOutPerFill": "200000000000000000",
+            "maxOutPerFill": "0",
+            "maxFeeBps": 15
+          },
+          "nonce": "96161280993530101344356432955733448629",
+          "ocoGroup": null
+        }
+      ]
+    },
+    {
+      "name": "an OCO pair on one ether: a take-profit at 3,000 and a stop at 2,000 with a 10% band, under one group",
+      "form": {
+        "mode": "oco",
+        "spend": "WETH",
+        "buy": "USDG",
+        "amount": "1",
+        "rate": "3000",
+        "trigger": "2000",
+        "band": "10",
+        "marketBuyPerSell": 2330.18,
+        "flipRate": false,
+        "expiry": 1802592000,
+        "feeBps": 15
+      },
+      "legs": [
+        {
+          "terms": {
+            "amountPerFill": "1000000000000000000",
+            "totalFills": 1,
+            "everySec": 0,
+            "startAt": 0,
+            "expiry": 1802592000,
+            "minOutPerFill": "3000000000",
+            "triggerOutPerFill": "0",
+            "maxOutPerFill": "0",
+            "maxFeeBps": 15
+          },
+          "nonce": "213727027891163993154167486895627890235",
+          "ocoGroup": "0x5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "terms": {
+            "amountPerFill": "1000000000000000000",
+            "totalFills": 1,
+            "everySec": 0,
+            "startAt": 0,
+            "expiry": 1802592000,
+            "minOutPerFill": "1800000000",
+            "triggerOutPerFill": "2000000000",
+            "maxOutPerFill": "0",
+            "maxFeeBps": 15
+          },
+          "nonce": "37898203034592322310987247952672473229",
+          "ocoGroup": "0x5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        }
+      ]
+    },
+    {
+      "name": "a limit into a token of eight places, typed USDG per XBTC, its floor rounded down to the unit",
+      "form": {
+        "mode": "limit",
+        "spend": "USDG",
+        "buy": "XBTC",
+        "amount": "1234.56",
+        "rate": "65000",
+        "trigger": "",
+        "band": "20",
+        "marketBuyPerSell": 1.55e-05,
+        "flipRate": true,
+        "expiry": 0,
+        "feeBps": 30
+      },
+      "legs": [
+        {
+          "terms": {
+            "amountPerFill": "1234560000",
+            "totalFills": 1,
+            "everySec": 0,
+            "startAt": 0,
+            "expiry": 0,
+            "minOutPerFill": "1899323",
+            "triggerOutPerFill": "0",
+            "maxOutPerFill": "0",
+            "maxFeeBps": 30
+          },
+          "nonce": "213059893019247434655898606629409467465",
+          "ocoGroup": null
+        }
+      ]
+    },
+    {
+      "name": "a limit selling PONS for dollars at 31 cents",
+      "form": {
+        "mode": "limit",
+        "spend": "PONS",
+        "buy": "USDG",
+        "amount": "10000",
+        "rate": "0.31",
+        "trigger": "",
+        "band": "20",
+        "marketBuyPerSell": 0.269,
+        "flipRate": false,
+        "expiry": 1800086400,
+        "feeBps": 30
+      },
+      "legs": [
+        {
+          "terms": {
+            "amountPerFill": "10000000000000000000000",
+            "totalFills": 1,
+            "everySec": 0,
+            "startAt": 0,
+            "expiry": 1800086400,
+            "minOutPerFill": "3100000000",
+            "triggerOutPerFill": "0",
+            "maxOutPerFill": "0",
+            "maxFeeBps": 30
+          },
+          "nonce": "142757245253482248522160051771084421239",
+          "ocoGroup": null
+        }
+      ]
+    }
+  ],
+  "recurring": [
+    {
+      "name": "one ether into dollars over four hourly fills, inside a range of 2,000 to 3,000",
+      "form": {
+        "spend": "WETH",
+        "buy": "USDG",
+        "amount": "1",
+        "fills": 4,
+        "everySec": 3600,
+        "rangeOpen": true,
+        "rangeMin": "2000",
+        "rangeMax": "3000",
+        "marketBuyPerSell": 2330.18,
+        "flipRate": false,
+        "startAt": 0,
+        "expiry": 0,
+        "feeBps": 15
+      },
+      "terms": {
+        "amountPerFill": "250000000000000000",
+        "totalFills": 4,
+        "everySec": 3600,
+        "startAt": 0,
+        "expiry": 0,
+        "minOutPerFill": "500000000",
+        "triggerOutPerFill": "0",
+        "maxOutPerFill": "750000000",
+        "maxFeeBps": 15
+      },
+      "fillWindowSec": 300,
+      "nonce": "300050842404379630280235912775568124621"
+    },
+    {
+      "name": "a thousand dollars into ether over ten daily fills, typed USDG per WETH, starting later and expiring",
+      "form": {
+        "spend": "USDG",
+        "buy": "WETH",
+        "amount": "1000",
+        "fills": 10,
+        "everySec": 86400,
+        "rangeOpen": true,
+        "rangeMin": "2000",
+        "rangeMax": "3000",
+        "marketBuyPerSell": 0.000429,
+        "flipRate": true,
+        "startAt": 1800003600,
+        "expiry": 1802592000,
+        "feeBps": 15
+      },
+      "terms": {
+        "amountPerFill": "100000000",
+        "totalFills": 10,
+        "everySec": 86400,
+        "startAt": 1800003600,
+        "expiry": 1802592000,
+        "minOutPerFill": "33333333333333333",
+        "triggerOutPerFill": "0",
+        "maxOutPerFill": "50000000000000000",
+        "maxFeeBps": 15
+      },
+      "fillWindowSec": 300,
+      "nonce": "183757707640789863721142257489474489092"
+    },
+    {
+      "name": "a dollar into MANCER over three five-minute fills with no range, the dust under a fill kept",
+      "form": {
+        "spend": "USDG",
+        "buy": "MANCER",
+        "amount": "1",
+        "fills": 3,
+        "everySec": 300,
+        "rangeOpen": false,
+        "rangeMin": "",
+        "rangeMax": "",
+        "marketBuyPerSell": 49000,
+        "flipRate": false,
+        "startAt": 0,
+        "expiry": 1800086400,
+        "feeBps": 30
+      },
+      "terms": {
+        "amountPerFill": "333333",
+        "totalFills": 3,
+        "everySec": 300,
+        "startAt": 0,
+        "expiry": 1800086400,
+        "minOutPerFill": "0",
+        "triggerOutPerFill": "0",
+        "maxOutPerFill": "0",
+        "maxFeeBps": 30
+      },
+      "fillWindowSec": 120,
+      "nonce": "195919392500070116345898012776338433995"
+    }
+  ]
+}
