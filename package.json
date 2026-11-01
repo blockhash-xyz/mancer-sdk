@@ -2,14 +2,15 @@
   "name": "mancer-sdk",
   "version": "0.1.0",
   "private": true,
-  "description": "Mancer's TypeScript SDK and an example trading bot",
+  "description": "Mancer's TypeScript SDK, its MCP server and an example trading bot",
   "license": "MIT",
   "workspaces": [
     "packages/sdk",
+    "packages/mcp",
     "examples/trading-bot"
   ],
   "engines": {
-    "node": ">=22"
+    "node": ">=22.12"
   },
   "scripts": {
     "typecheck": "npm run typecheck --workspaces",

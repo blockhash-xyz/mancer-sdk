@@ -179,8 +179,10 @@ function swapCall(i: number, data: Hex, value: string, e: SwapCheck, runner: Add
  * A swap's steps (`GET /v1/quote` with `steps=1`): an exact approval of the input to the router's allowance target where
  * one is needed, then the router's `execute(Plan)` read field by field (`routerCallMismatch`: the tokens, the amount,
  * the recipient, the floor, the deadline, the fee and the ether it carries) and leg by leg (`readRouterLegs`: each leg a
- * venue or adapter of Mancer's own routing, paying the router or the caller, and an integrator fee only where asked). A
- * launch route's steps are its envelope's transactions in order, held to the site's own envelope check
+ * venue or adapter of Mancer's own routing, paying the router or the caller, and an integrator fee only where asked). The
+ * ordered envelope every build for a taker carries (`entrypoint: 'router'`) is held to that same plain swap: its
+ * transactions the steps, the approval and the swap, for the wallet and the recipient named, and nothing else in it
+ * (`routerEnvelopeCheck`). A launch route's steps are its envelope's transactions in order, held to the site's own envelope check
  * (`executionEnvelopeMismatch`) and the pinned launch stack, each allowance exact, its last the same router call
  * through the launch coordinator.
  */
@@ -190,7 +192,12 @@ export function checkSwapSteps(quote: Quote, e: SwapCheck, trusted: TrustedContr
   const readings: StepReading[] = []
   const steps = ready.steps
   const execution = quote.execution as Execution | undefined
-  if (execution && Array.isArray(execution.transactions) && execution.transactions.length) {
+  // the ordered envelope the API puts on every build that names a taker (`entrypoint: 'router'`): the input's exact
+  // approval and the router's call, nothing else. Its steps are a plain swap's, and are checked as one below, with the
+  // recipient the caller named
+  if (execution && Array.isArray(execution.transactions) && execution.transactions.length && execution.entrypoint === 'router') {
+    routerEnvelopeCheck(execution, steps, e, trusted)
+  } else if (execution && Array.isArray(execution.transactions) && execution.transactions.length) {
     const launch = trusted.launch
     const wrong = executionEnvelopeMismatch(execution as never, {
       account: e.wallet,
@@ -251,6 +258,35 @@ export function checkSwapSteps(quote: Quote, e: SwapCheck, trusted: TrustedContr
   return checked(ready, readings)
 }
 
+/**
+ * A router build's ordered envelope (`entrypoint: 'router'`), held to what a plain swap is before its steps are checked as
+ * one: for the wallet that sends it and paying the recipient the caller named; its requirements the input's exact
+ * allowance to the router's allowance target alone (none for ether in), never a protocol's authorization; its transactions
+ * an approval and the swap, on this chain, each the step of its place byte for byte. The steps are what the wallet signs:
+ * the plain swap's check then reads every field of the approval and the router's call.
+ */
+function routerEnvelopeCheck(execution: Execution, steps: readonly ReadyStep[], e: SwapCheck, trusted: TrustedContracts): void {
+  if (execution.version !== 1) refuse('swap', "the router's envelope is of a version this SDK does not read")
+  if (!same(execution.taker, e.wallet)) refuse('swap', "the router's envelope is for another wallet")
+  if (!same(execution.recipient, e.recipient)) refuse('swap', "the router's envelope pays another recipient than the one you named")
+  if (!Array.isArray(execution.requirements)) refuse('swap', "the router's envelope names no requirements")
+  for (const r of execution.requirements) {
+    if (r.kind !== 'erc20-allowance') refuse('swap', `the router's envelope asks for a ${String(r.kind)}, which a plain swap never carries`)
+    if (e.nativeIn) refuse('swap', 'a swap of ether needs no allowance, and the envelope names one')
+    if (!same(r.token, e.tokenIn) || !same(r.spender, trusted.allowanceTarget)) refuse('swap', "the envelope's allowance is not of the token you spend to the router's allowance target")
+    if (String(r.amount) !== e.amountIn.toString()) refuse('swap', 'the envelope approves the input for another amount than the one you spend')
+  }
+  if (execution.requirements.length > 1) refuse('swap', "the router's envelope names more than the input's one allowance")
+  if (steps.length !== execution.transactions.length) refuse('swap', 'the steps are not the envelope transactions')
+  execution.transactions.forEach((t, i) => {
+    const last = i === execution.transactions.length - 1
+    if (t.kind !== (last ? 'swap' : 'approval')) refuse('swap', `the router's envelope carries a step of kind ${String(t.kind)} where a plain swap has ${last ? 'the swap' : 'its approval'}`, i)
+    if (t.chainId !== trusted.chainId) refuse('swap', "a transaction of the router's envelope is for another chain", i)
+    const s = steps[i]!
+    if (s.kind !== t.kind || !same(s.to, t.to) || s.data.toLowerCase() !== t.data.toLowerCase() || s.value !== t.value) refuse('swap', 'a step is not its envelope transaction', i)
+  })
+}
+
 function describeSwap(r: RouterCallReading, legs: LegReading[]): string {
   const tok = (t: Address | null) => t ?? 'ETH'
   const to = r.recipient === 'sender' ? 'the sender' : r.recipient
@@ -267,20 +303,47 @@ export interface OrderSetupCheck {
   totalFills: number
   nativeIn: boolean
   /** The wallet's allowance of `tokenIn` to the orders contract now, read on the caller's own node (0 where unread):
-   * an approval may raise it by this order's pull at the most. */
+   * what the maker's other orders were approved to pull. */
   allowance?: bigint
+  /** What the maker's other open orders on `tokenIn` still pull, as the caller counts them itself (0 where it counts
+   * none). */
+  openPulls?: bigint
+  /** The wallet's WETH balance now, read on the caller's own node like the allowance (0 where unread): what a wrap need
+   * not wrap again. */
+  held?: bigint
 }
 
-/** An order's setup steps (`GET /v1/orders/setup` with `steps=1`): a wrap of ether into WETH, and the orders contract's
- * approval, each bounded by what the caller's own node reads: the allowance now plus this order's whole pull, never the
- * API's count of other open orders. A launch pair's setup is not checked here, and is refused. */
+/**
+ * An order's setup steps (`GET /v1/orders/setup` with `steps=1`): a wrap of ether into WETH, and the orders contract's
+ * approval, each bounded by what the caller reads itself, never the API's count of other open orders. What the maker's
+ * other orders pull (`others`) is the greater of the allowance the caller's node reads (what they were approved for) and
+ * the open pulls the caller counts, 0 where it reads neither.
+ *
+ * - The approval covers this order's whole pull, and is at most `others` plus that pull.
+ * - The wrap is at most what the book will pull, this order's and the other orders', less the WETH the wallet holds
+ *   (`others` + pull - `held`, never under zero), as the API's own builder wraps it. A caller with no credential, whose
+ *   setup counts no other order, names no `others` (no allowance and no count): its wrap is at most the pull less what
+ *   the wallet holds.
+ *
+ * A launch pair's setup is not checked here, and is refused.
+ */
 export function checkOrderSetupSteps(answer: { ready?: ReadyStepsField; need?: Record<string, unknown> }, e: OrderSetupCheck, trusted: TrustedContracts): CheckedSteps | null {
   if (!answer.ready) return refuse('order', 'the setup answer carries no steps')
   if ('error' in answer.ready && answer.ready.code === 'nothing-to-do') return null
   const ready = readyOf(answer.ready, 'order')
   common('order', ready, e.wallet, true)
+  for (const [name, v] of [['allowance', e.allowance], ['openPulls', e.openPulls], ['held', e.held]] as const) {
+    if (v !== undefined && (typeof v !== 'bigint' || v < 0n)) refuse('order', `${name} is raw units, zero or more`)
+  }
   const pull = e.amountPerFill * BigInt(e.totalFills)
-  const most = (e.allowance ?? 0n) + pull
+  const allowance = e.allowance ?? 0n
+  const counted = e.openPulls ?? 0n
+  const others = allowance > counted ? allowance : counted
+  const most = others + pull
+  // the API's own builder (packages/api/src/steps/orders.ts `orderSetupSteps`) wraps what the book will pull (this order's
+  // and, where the asker may read them, the maker's other open orders') less the WETH the wallet holds: the same bound
+  const short = others + pull - (e.held ?? 0n)
+  const wrapMost = short <= 0n ? 0n : short
   const readings: StepReading[] = []
   ready.steps.forEach((s, i) => {
     if (s.kind === 'wrap') {
@@ -288,7 +351,8 @@ export function checkOrderSetupSteps(answer: { ready?: ReadyStepsField; need?: R
       if (!same(s.to, trusted.weth)) refuse('order', 'the wrap is not sent to WETH', i)
       if (s.data.toLowerCase() !== encodeFunctionData({ abi: WETH_ABI, functionName: 'deposit' })) refuse('order', 'the wrap is no deposit()', i)
       const v = BigInt(s.value)
-      if (v === 0n || v > most) refuse('order', 'the wrap is for more than the order pulls', i)
+      if (v === 0n) refuse('order', 'the wrap wraps nothing', i)
+      if (v > wrapMost) refuse('order', "the wrap is for more than the order pulls, with what the maker's other orders pull, less the WETH the wallet holds", i)
       readings.push({ step: i, kind: s.kind, to: getAddress(s.to), value: v, does: `wraps ${v} wei into WETH` })
       return
     }
@@ -300,7 +364,11 @@ export function checkOrderSetupSteps(answer: { ready?: ReadyStepsField; need?: R
       if (!same(a.spender, trusted.orders)) refuse('order', "the approval's spender is not the orders contract", i)
       if (a.amount < pull) refuse('order', "the approval does not cover the order's pull", i)
       if (a.amount >= UNBOUNDED) refuse('order', 'the approval is unbounded', i)
-      if (a.amount > most) refuse('order', "the approval is for more than the allowance your node reads plus this order's pull", i)
+      if (a.amount > most) {
+        refuse('order', e.openPulls === undefined
+          ? "the approval is for more than the allowance your node reads plus this order's pull"
+          : "the approval is for more than this order's pull plus what the maker's other open orders pull, as counted", i)
+      }
       readings.push({ step: i, kind: s.kind, to: getAddress(s.to), value: 0n, does: `approves the orders contract for ${a.amount}` })
       return
     }
@@ -463,6 +531,16 @@ export function checkBookSteps(answer: BookStepsResponse, e: BookStepsCheck): Ch
   if (!e.expected) refuse('book', "the act's calls are rebuilt from your own arguments and node (Mancer.bookSteps): the answer's calldata is not taken")
   common('book', answer, e.wallet, true)
   return checked(answer, exactCalls('book', answer, e.expected), { deployment })
+}
+
+/**
+ * A Book's act carried by another route's ready-to-sign steps (a raise trade's `raise-quote`, a settlement's
+ * `liquidation-quotes`): on chain 4663, for the wallet that sends it, simulated whole, and every step exactly the kit's
+ * call rebuilt by the caller (`expected`), an exact approval of what the act pulls before it where one is named.
+ */
+export function checkExactBookCalls(check: string, ready: ReadySteps, wallet: Address, expected: BookActCalls): CheckedSteps {
+  common(check, ready, wallet, true)
+  return checked(ready, exactCalls(check, ready, expected))
 }
 
 export interface DraftOpenCheck {

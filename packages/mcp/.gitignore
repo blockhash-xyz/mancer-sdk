@@ -1,0 +1,2 @@
+# made from the root lock by scripts/npm/shrinkwrap.mjs at each pack (prepack), taken away after it (postpack)
+npm-shrinkwrap.json

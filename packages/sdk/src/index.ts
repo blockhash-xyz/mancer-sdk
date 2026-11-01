@@ -13,6 +13,8 @@ export type {
   LimitOrderInput,
   OrderOptions,
   PlacedOrder,
+  RaiseCall,
+  RaiseRequest,
   RecurringOrderInput,
   ReferenceFn,
   StopOrderInput,
@@ -27,14 +29,15 @@ export { MancerError, MancerCheckError, SDK_ERROR_CODES, isRetryable, readRateLi
 export type { RateLimitInfo, RetryOptions } from './errors'
 export { MancerStepError, sendCheckedSteps } from './send'
 export type { SendOptions, SentStep } from './send'
-export { bookActCalls, readChainBook, vaultRouteCheck, verifyBookDeployment } from './books'
-export type { BookAction, BookActArgs, ChainBook } from './books'
+export { bookActCalls, bookBasePairOf, bookQuoteDigest, bookRedeemPayouts, checkVaultQuote, potAfterSweep, raiseCalls, readBookRedemption, readChainBook, readVaultPending, redeemPayout, settlementCalls, vaultRouteCheck, verifyBookDeployment } from './books'
+export type { BookAction, BookActArgs, BookPot, BookRedemption, ChainBook } from './books'
 export {
   bookDeploymentOf,
   checkBookSteps,
   checkCancelAllSteps,
   checkCancelSteps,
   checkDraftOpenSteps,
+  checkExactBookCalls,
   checkOrderSetupSteps,
   checkSwapSteps,
   checkTransferSteps,
@@ -68,5 +71,32 @@ export {
   routerLegsMismatch,
 } from './shared'
 export type { AllowlistDrift, LegExpectation, LegReading, OrderExpectation, OrderReading, RouterCallExpectation, RouterCallReading } from './shared'
+// the order a maker signs, as mancer.xyz builds it (the terms, the maker's epoch and a nonce in; the wire order and its
+// EIP-712 request out), the orders contract's ABI, and the message a signature cancel signs: for a client that hands the
+// typed data to a wallet of its own to sign, as Mancer's MCP server does for an agent's wallet
+export {
+  MANCER_ORDER_FEE_CEILING_BPS,
+  ZERO_OCO_GROUP,
+  cancelOrdersMessage,
+  mancerOrdersV3Abi,
+  orderTypedDataV3,
+  orderV3ToSign,
+} from './shared'
+export type { MancerOrderV3, OrderSigner, PlaceOrderParams } from './shared'
+// a webhook delivery's check, on the raw body as it arrived (docs: /api/guides/webhooks)
+export {
+  WEBHOOK_EVENT_ID_HEADER,
+  WEBHOOK_EVENT_TYPE_HEADER,
+  WEBHOOK_ID_HEADER,
+  WEBHOOK_PING_KIND,
+  WEBHOOK_SIGNATURE_HEADER,
+  WEBHOOK_TIMESTAMP_HEADER,
+  WEBHOOK_TOLERANCE_SEC,
+  checkWebhookSignature,
+  parseWebhookSignature,
+  verifyWebhookSignature,
+  webhookSignatureOf,
+} from './shared'
+export type { ParsedWebhookSignature, WebhookSignatureCheck, WebhookSignatureFailure } from './shared'
 export { OPERATIONS } from './generated/openapi'
 export type * from './generated/openapi'

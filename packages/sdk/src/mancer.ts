@@ -1,16 +1,19 @@
-import { decodeEventLog, erc20Abi, getAddress, hashTypedData, isAddress, keccak256, parseAbi, zeroAddress, type Address, type Hash, type Hex, type TransactionReceipt } from 'viem'
-import { bookActCalls, readChainBook, verifyBookDeployment, vaultRouteCheck, type BookAction, type BookActArgs, type ChainBook } from './books'
+import { decodeEventLog, decodeFunctionResult, erc20Abi, getAddress, hashTypedData, isAddress, keccak256, parseAbi, zeroAddress, type Abi, type Address, type Hash, type Hex, type TransactionReceipt } from 'viem'
+import { bookActCalls, bookBasePairOf, checkVaultQuote, raiseCalls, readBookRedemption, readChainBook, readVaultPending, settlementCalls, verifyBookDeployment, type BookAction, type BookActArgs, type BookRedemption, type ChainBook } from './books'
 import { floorBesidePool, floorKind, holdSignedFloor, namedFloor, wethUsdgPoolOut, type FloorRule, type ReferenceFn } from './floor'
 import { SDK_VERSION } from './version'
 import { routerAllowlistDrift, type AllowlistDrift } from './shared'
 import {
   checkBookSteps,
   checkCancelAllSteps,
+  checkExactBookCalls,
   checkCancelSteps,
   checkDraftOpenSteps,
   checkOrderSetupSteps,
   checkSwapSteps,
   checkTransferSteps,
+  readyOf,
+  type BookActCalls,
   type CheckedSteps,
   type TransferAssetInput,
 } from './checks'
@@ -21,6 +24,8 @@ import type {
   AccountEvent,
   AccountEventsPage,
   BookDraftResponse,
+  BookLiquidationQuotesResponse,
+  BookRaiseQuoteResponse,
   BookStepsRequest,
   BookStepsResponse,
   BookVaultQuoteRequest,
@@ -36,16 +41,17 @@ import type {
 } from './generated/openapi'
 import { sendCheckedSteps, type SendOptions, type SentStep } from './send'
 import {
-  BOOK_SHARED,
   MANCER_ORDER_FEE_CEILING_BPS,
   MANCER_ROUTER_DEPLOYMENTS,
   ORDER_TYPEHASH_V3,
+  approveCall,
+  bookAbisFor,
+  bookCallData,
   cancelOrdersMessage,
   mancerOrdersV3Abi,
   orderTypedDataMismatch,
   orderTypedDataV3,
   orderV3ToSign,
-  parseBookQuote,
   publishedSwapFeeBps,
   type BookDeployment,
   type MancerOrderV3,
@@ -147,6 +153,27 @@ export interface OrderOptions {
   /** Send the wrap and approval the order needs first (default true). */
   setup?: boolean
   send?: SendOptions
+}
+
+/** A trade on a raising Book's curve, from the wallet itself (`GET /v1/books/{token}/raise-quote`). */
+export interface RaiseRequest extends FloorRule {
+  side: 'buy' | 'sell'
+  /** A buy's base pair in raw units (wei of ether with `payWith` `eth`), or a sale's Book tokens in raw units. */
+  amountIn: bigint
+  /** What a buy pays with, or a sale pays out: `eth` (a WETH Book alone, and its default) or `quote` (the base pair,
+   * the default on any other Book). */
+  payWith?: 'eth' | 'quote'
+  /** The band the API sets its own floor at under its quote, 1 to 500. Default 100. */
+  slippageBps?: number
+}
+
+/** A raise trade's own call, its approval and its floor, as the kit builds them: what its steps must be. */
+export interface RaiseCall {
+  book: ChainBook
+  /** The Book's base pair (`quoteOf(bookId)` on the pad), WETH on a WETH Book. */
+  quote: Address
+  payWith: 'eth' | 'quote'
+  expected: BookActCalls
 }
 
 export interface TransferRequest {
@@ -326,7 +353,8 @@ export class Mancer extends MancerClient {
       await floorBesidePool('swap', r, this.publicClient, trusted, base, floor)
     }
     if (floor <= 0n) throw new MancerCheckError('swap', 'the floor is zero')
-    const envelope = !!quote.execution && Array.isArray(quote.execution.transactions) && quote.execution.transactions.length > 0
+    // a launch route's envelope (a router build's is a plain swap's: checks.ts `routerEnvelopeCheck`)
+    const envelope = !!quote.execution && quote.execution.entrypoint !== 'router' && Array.isArray(quote.execution.transactions) && quote.execution.transactions.length > 0
     if (envelope) await this.trustedLaunchStack()
     const checked = checkSwapSteps(quote, {
       wallet,
@@ -371,7 +399,9 @@ export class Mancer extends MancerClient {
   }
 
   /** The wrap and the approval an order needs, checked: null where it needs none. The approval is held to the allowance
-   * your own node reads plus this order's pull, never the API's count of other open orders. */
+   * your own node reads plus this order's pull, never the API's count of other open orders; a wrap of ether to that
+   * allowance plus this order's pull less the WETH your node reads the wallet holding, as the API's own builder wraps
+   * what the book will pull (`checkOrderSetupSteps`). */
   async orderSetup(t: { tokenIn: TokenRef; tokenOut: Address; amountPerFill: bigint; totalFills: number }): Promise<CheckedSteps | null> {
     const trusted = await this.trustedContracts()
     const tokenIn = t.tokenIn === ETH ? trusted.weth : getAddress(t.tokenIn)
@@ -380,8 +410,13 @@ export class Mancer extends MancerClient {
       auth: 'required',
     })).data
     if (answer.ready && 'steps' in answer.ready && answer.ready.steps.length === 0) return null
-    const allowance = await this.publicClient.readContract({ address: tokenIn, abi: erc20Abi, functionName: 'allowance', args: [this.wallet, trusted.orders] })
-    return checkOrderSetupSteps(answer as never, { wallet: this.wallet, tokenIn, amountPerFill: t.amountPerFill, totalFills: t.totalFills, nativeIn: t.tokenIn === ETH, allowance }, trusted)
+    const nativeIn = t.tokenIn === ETH
+    const [allowance, held] = await Promise.all([
+      this.publicClient.readContract({ address: tokenIn, abi: erc20Abi, functionName: 'allowance', args: [this.wallet, trusted.orders] }),
+      // a wrap spends ether: what the wallet holds of WETH already, read on your node, is what it need not wrap again
+      nativeIn ? this.publicClient.readContract({ address: trusted.weth, abi: erc20Abi, functionName: 'balanceOf', args: [this.wallet] }) : Promise.resolve(undefined),
+    ])
+    return checkOrderSetupSteps(answer as never, { wallet: this.wallet, tokenIn, amountPerFill: t.amountPerFill, totalFills: t.totalFills, nativeIn, allowance, ...(held !== undefined ? { held } : {}) }, trusted)
   }
 
   async #assertOrdersV3(orders: Address): Promise<void> {
@@ -456,10 +491,10 @@ export class Mancer extends MancerClient {
     const { order, signature } = kept
     const hash = hashTypedData(orderTypedDataV3(order, trusted.chainId, trusted.orders) as never)
     // the submission names the contract the signature binds; one the API does not serve yet is asked twice more
-    let answer: { hash: Hash; existing: boolean } | null = null
+    let answer: unknown = null
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        answer = (await this.request<{ hash: Hash; existing: boolean }>('POST', '/v1/orders', { body: { order, signature, contract: trusted.orders }, auth: 'required' })).data
+        answer = (await this.request<unknown>('POST', '/v1/orders', { body: { order, signature, contract: trusted.orders }, auth: 'required' })).data
         break
       } catch (e) {
         if (!(e instanceof MancerError) || e.code !== 'contract-not-served' || attempt === 2) throw e
@@ -467,9 +502,15 @@ export class Mancer extends MancerClient {
       }
     }
     this.#unsettledOrders.delete(key)
-    const placed: PlacedOrder = { hash, existing: answer!.existing === true, order, signature }
-    if (!same(answer!.hash, hash)) {
-      throw Object.assign(new MancerCheckError('order', `the API names the order ${answer!.hash}, and the order you signed is ${hash}: read and cancel it by ${hash}`), { placed })
+    // the API took the order with a success: an answer of no shape (an empty body, null, a hash that is no string) is
+    // refused as one naming another hash is, carrying the order, since the API may hold it
+    const named = answer && typeof answer === 'object' && !Array.isArray(answer) ? (answer as { hash?: unknown; existing?: unknown }) : null
+    const placed: PlacedOrder = { hash, existing: named?.existing === true, order, signature }
+    if (typeof named?.hash !== 'string') {
+      throw Object.assign(new MancerCheckError('order', `the API took the order with an answer that names no order hash: it may rest, so read and cancel it by ${hash}`), { placed })
+    }
+    if (!same(named.hash, hash)) {
+      throw Object.assign(new MancerCheckError('order', `the API names the order ${named.hash.slice(0, 80)}, and the order you signed is ${hash}: read and cancel it by ${hash}`), { placed })
     }
     return placed
   }
@@ -669,13 +710,7 @@ export class Mancer extends MancerClient {
     const trusted = await this.trustedContracts()
     const book = await this.#book(token)
     const answer = (await this.request<BookVaultQuoteResponse>('POST', `/v1/books/${book.token}/vault-quote`, { body: { wallet: this.wallet, ...body }, auth: 'required' })).data
-    if (!same(answer.tokenIn, body.tokenIn)) throw new MancerCheckError('book', 'the vault quote spends another token')
-    if (body.tokenOut && !same(answer.tokenOut, body.tokenOut)) throw new MancerCheckError('book', 'the vault quote buys another token')
-    if (body.amountIn && answer.amountIn !== body.amountIn) throw new MancerCheckError('book', 'the vault quote spends another amount')
-    if (body.purpose === 'sweep' && body.tokenOut === undefined && answer.route && answer.route !== '0x' && !same(answer.tokenOut, BOOK_SHARED.weth)) throw new MancerCheckError('book', 'a sweep sells for WETH')
-    if (!same(answer.vault, book.vault)) throw new MancerCheckError('book', 'the vault quote names another vault than the Book your node reads')
-    if (answer.route && answer.route !== '0x') {
-      vaultRouteCheck(parseBookQuote({ ...answer, signature: answer.signature ?? '0x' }), book, trusted.router)
+    if (checkVaultQuote(answer, body, book, trusted.router)) {
       // the floor the quote signs, held to the rule: never the answer's simulation beside it
       const q = { tokenIn: getAddress(answer.tokenIn), tokenOut: getAddress(answer.tokenOut), amountIn: BigInt(answer.amountIn) }
       await holdSignedFloor('book', guard, this.publicClient, trusted, q, BigInt(answer.minOut))
@@ -691,6 +726,130 @@ export class Mancer extends MancerClient {
     const quote = await this.vaultQuote(token, { ...body, purpose: 'trade' }, guard)
     const { sent } = await this.bookAct(token, 'proposeTrade', { quote, ...guard }, send)
     return { quote, sent }
+  }
+
+  /** The Book a token is, read from its factory on your own node, its contracts' code held to their reviewed builds, its
+   * base pair (the pad's own `quoteOf`, WETH on a WETH Book), and the raise's tax now (the pad's `currentTaxBps`). */
+  async bookOf(token: Address): Promise<ChainBook & { quote: Address; taxBps: number }> {
+    const book = await this.#book(token)
+    const d = book.deployment
+    const [quote, tax] = await Promise.all([
+      this.#quoteOf(book),
+      this.publicClient.readContract({ address: d.pad.address, abi: bookAbisFor(d).pad as Abi, functionName: 'currentTaxBps', args: [book.bookId] }) as Promise<bigint>,
+    ])
+    return { ...book, quote, taxBps: Number(tax) }
+  }
+
+  #quoteOf(book: ChainBook): Promise<Address> {
+    return bookBasePairOf(this.publicClient, book)
+  }
+
+  /** The trade a Book's vault holds pending, read on your own node: null where it holds none. */
+  async vaultPending(token: Address): Promise<{ book: ChainBook; pending: Awaited<ReturnType<typeof readVaultPending>> }> {
+    const book = await this.#book(token)
+    return { book, pending: await readVaultPending(this.publicClient, book) }
+  }
+
+  /**
+   * A settled Book's redemption as your own node reads it: the settler's holder pot and what circulates against it, the
+   * holder's Book tokens (the wallet's unless another is named), and every token still on the vault that a later sweep
+   * would add to the pot. A redemption pays the pot's share as it stands, so one before the sweeps pays less than one
+   * after them: `bookRedeemPayouts` gives both.
+   */
+  async bookRedemption(token: Address, holder: Address = this.wallet): Promise<BookRedemption> {
+    const book = await this.#book(token)
+    return readBookRedemption(this.publicClient, book, getAddress(holder))
+  }
+
+  /** A raise trade's call, rebuilt with the kit's builders from the Book your node reads, at a floor named: the base pair
+   * is the pad's `quoteOf`, and the approval is exact where your node reads the allowance short. */
+  async #raiseCall(token: Address, r: { side: 'buy' | 'sell'; amountIn: bigint; payWith?: 'eth' | 'quote' }, minOut: bigint): Promise<RaiseCall> {
+    if (r.side !== 'buy' && r.side !== 'sell') throw new MancerCheckError('book', 'a raise trade is a buy or a sale')
+    if (typeof r.amountIn !== 'bigint' || r.amountIn <= 0n) throw new MancerCheckError('book', 'amountIn is raw units above zero')
+    const book = await this.#book(token)
+    const quote = await this.#quoteOf(book)
+    // a buy in the base pair pulls it to the pad, and a sale pulls the Book's tokens: each an exact approval where short
+    const { payWith, expected } = await raiseCalls(this.publicClient, book, quote, this.wallet, r, minOut)
+    return { book, quote, payWith, expected }
+  }
+
+  /**
+   * What a raise trade pays now by the curve itself: the kit's own call (and its exact approval) simulated from the wallet
+   * on your own node at the head (`eth_simulateV1`, the block stamped a second past the head), with a floor of one unit.
+   * A buy's Book tokens, a sale's base pair or ether. It reads no answer of Mancer's: a reference a raise's floor can be
+   * held to (`reference`). It refuses where the trade does not run from the wallet now (no funds, a closed raise).
+   */
+  async curveOut(token: Address, r: { side: 'buy' | 'sell'; amountIn: bigint; payWith?: 'eth' | 'quote' }): Promise<bigint> {
+    const c = await this.#raiseCall(token, r, 1n)
+    const head = await this.publicClient.getBlock()
+    const tx = bookCallData(c.expected.calls[0]!)
+    const calls = [
+      ...(c.expected.approval ? [bookCallData(approveCall(c.expected.approval.token, c.expected.approval.spender, c.expected.approval.amount))] : []),
+      tx,
+    ].map((t) => ({ account: this.wallet, to: t.to, data: t.data, value: t.value }))
+    let answer: Hex
+    try {
+      const [block] = await this.publicClient.simulateBlocks({ blockNumber: head.number, blocks: [{ blockOverrides: { time: head.timestamp + 1n }, calls }] })
+      const last = block?.calls.at(-1)
+      if (!block || block.calls.some((x) => x.status !== 'success') || !last) throw new Error('a call reverted')
+      answer = last.data
+    } catch (e) {
+      throw new MancerCheckError('book', `the curve trade does not run from the wallet on your node (${e instanceof Error ? e.message.split('\n')[0] : 'no answer'}): the wallet may lack the funds, or the raise may be closed`)
+    }
+    const fn = c.expected.calls[0]!.functionName
+    const out = decodeFunctionResult({ abi: bookAbisFor(c.book.deployment).pad as Abi, functionName: fn, data: answer }) as bigint
+    if (typeof out !== 'bigint' || out <= 0n) throw new MancerCheckError('book', 'the curve pays nothing for the trade on your node')
+    return out
+  }
+
+  /**
+   * A trade on a raising Book's curve, from the wallet, as checked steps (`GET /v1/books/{token}/raise-quote` with
+   * `steps=1`). The Book, its id and its base pair are read on your own node; the floor the call carries is held to the
+   * rule you name (`minOut`, a `reference` with `maxSlippageBps`, which `curveOut` reads from the curve itself, or
+   * `trustQuote: true`, the API's own); and every step must be the kit's own call at that floor byte for byte, with an
+   * exact approval of what it pulls before it where your node reads the allowance short.
+   */
+  async raiseSteps(token: Address, r: RaiseRequest): Promise<{ answer: BookRaiseQuoteResponse; checked: CheckedSteps; book: ChainBook; quote: Address; payWith: 'eth' | 'quote'; minOut: bigint }> {
+    floorKind(r, 'book')
+    const slippage = r.slippageBps ?? 100
+    if (!Number.isInteger(slippage) || slippage < 1 || slippage > 500) throw new MancerCheckError('book', 'slippageBps is a whole number of 1 to 500')
+    const probe = await this.#raiseCall(token, r, 1n)
+    const q = r.side === 'buy' ? { tokenIn: probe.quote, tokenOut: probe.book.token, amountIn: r.amountIn } : { tokenIn: probe.book.token, tokenOut: probe.quote, amountIn: r.amountIn }
+    const named = await namedFloor('book', r, q)
+    const answer = (await this.request<BookRaiseQuoteResponse>('GET', `/v1/books/${probe.book.token}/raise-quote`, {
+      query: { side: r.side, amountIn: r.amountIn, payWith: probe.payWith, taker: this.wallet, slippageBps: slippage, steps: '1' },
+      auth: 'required',
+    })).data
+    if (answer.side !== r.side || answer.payWith !== probe.payWith) throw new MancerCheckError('book', 'the raise quote is for another side or another way to pay')
+    if (String(answer.bookId) !== probe.book.bookId.toString()) throw new MancerCheckError('book', 'the raise quote names another Book id than the Book your node reads')
+    if (!/^\d{1,78}$/.test(String(answer.amountIn)) || BigInt(answer.amountIn) !== r.amountIn) throw new MancerCheckError('book', 'the raise quote trades another amount')
+    if (!same(answer.quote?.token, probe.quote)) throw new MancerCheckError('book', "the raise quote names another base pair than the pad's")
+    if (!/^\d{1,78}$/.test(String(answer.minOut))) throw new MancerCheckError('book', 'the raise quote names no floor')
+    const minOut = BigInt(answer.minOut)
+    if (minOut <= 0n) throw new MancerCheckError('book', "the raise quote's floor is zero")
+    if (named && minOut < named.floor) throw new MancerCheckError('book', `the raise's floor, ${minOut}, is under the ${named.floor} you named`)
+    const c = await this.#raiseCall(token, r, minOut)
+    const checked = checkExactBookCalls('book', readyOf(answer.ready, 'book'), this.wallet, c.expected)
+    return { answer, checked, book: c.book, quote: c.quote, payWith: c.payWith, minOut }
+  }
+
+  /**
+   * A settlement of an ended Book as checked steps (`POST /v1/books/{token}/liquidation-quotes` with `steps=1`): the
+   * vault's `syncTracked` first where the answer names one, rebuilt from the tokens your node reads the vault tracking,
+   * then the settler's `liquidate` rebuilt with the kit's builder from the signed sales, each sale's route held to the
+   * vault's own rules leg by leg, and the call to the kit's own liquidation check.
+   */
+  async settleSteps(token: Address, body: { slippageBps?: number } = {}): Promise<{ answer: BookLiquidationQuotesResponse; checked: CheckedSteps; book: ChainBook }> {
+    const trusted = await this.trustedContracts()
+    const book = await this.#book(token)
+    const answer = (await this.request<BookLiquidationQuotesResponse & { ready?: unknown }>('POST', `/v1/books/${book.token}/liquidation-quotes`, {
+      query: { steps: '1' },
+      body: { wallet: this.wallet, ...(body.slippageBps !== undefined ? { slippageBps: body.slippageBps } : {}) },
+      auth: 'required',
+    })).data
+    const expected = await settlementCalls(this.publicClient, book, this.wallet, answer, trusted.router)
+    const checked = checkExactBookCalls('book', readyOf((answer as { ready?: never }).ready, 'book'), this.wallet, expected)
+    return { answer, checked, book }
   }
 
   /**
@@ -710,6 +869,31 @@ export class Mancer extends MancerClient {
   }
 
   /**
+   * A saved Book's open as checked steps, not sent: what `openBookFromDraft` sends. The open is rebuilt with the kit's
+   * `openBookCall` from the draft you made and the terms you name, and the step must be that call byte for byte. `path`
+   * is the draft's own path on the API, where the open's hash is bound once the wallet sends it
+   * (`PATCH {path} {txHash}`).
+   */
+  async bookOpenSteps(
+    id: string,
+    terms: DraftOpenStepsRequest['terms'],
+    options: { name?: string; symbol?: string; factory?: Address } = {},
+  ): Promise<{ answer: DraftOpenStepsResponse; checked: CheckedSteps; path: string }> {
+    if (!DRAFT_ID.test(id)) throw new MancerCheckError('book', 'a draft id is 32 hex characters')
+    const kept = this.#drafts.get(id)
+    const draft = { name: options.name ?? kept?.name, symbol: options.symbol ?? kept?.symbol, factory: options.factory ?? kept?.factory }
+    if (draft.name === undefined || draft.symbol === undefined) {
+      throw new MancerCheckError('book', "name the draft's name and symbol (or open a draft this client saved): the open is held to the draft you made, never to the answer's word")
+    }
+    const open = openBookParamsOf(terms as unknown as Record<string, unknown>, { name: draft.name, symbol: draft.symbol })
+    const path = `/v1/books/drafts/${id}`
+    const answer = (await this.request<DraftOpenStepsResponse>('POST', `${path}/steps`, { body: { wallet: this.wallet, terms }, auth: 'required' })).data
+    if (!answer.bind || answer.bind.method !== 'PATCH' || answer.bind.path !== path) throw new MancerCheckError('book', "the answer's bind is not this draft's own path on the API")
+    const checked = checkDraftOpenSteps(answer, { wallet: this.wallet, draftId: id, open, ...(draft.factory ? { factory: draft.factory } : {}), deployments: this.bookDeployments })
+    return { answer, checked, path }
+  }
+
+  /**
    * A saved Book's open, checked and sent. The open is rebuilt with the kit's `openBookCall` from the draft you made (its
    * factory, name and ticker: kept by `createBookDraft`, or named here for a draft saved elsewhere) and the terms you name,
    * and the step must be that call byte for byte. Its transaction's hash is bound to the record at the draft's own path
@@ -720,18 +904,8 @@ export class Mancer extends MancerClient {
     terms: DraftOpenStepsRequest['terms'],
     options: SendOptions & { name?: string; symbol?: string; factory?: Address } = {},
   ): Promise<{ answer: DraftOpenStepsResponse; sent: SentStep[]; draft: BookDraftResponse | null }> {
-    if (!DRAFT_ID.test(id)) throw new MancerCheckError('book', 'a draft id is 32 hex characters')
     const { name, symbol, factory, ...send } = options
-    const kept = this.#drafts.get(id)
-    const draft = { name: name ?? kept?.name, symbol: symbol ?? kept?.symbol, factory: factory ?? kept?.factory }
-    if (draft.name === undefined || draft.symbol === undefined) {
-      throw new MancerCheckError('book', "name the draft's name and symbol (or open a draft this client saved): the open is held to the draft you made, never to the answer's word")
-    }
-    const open = openBookParamsOf(terms as unknown as Record<string, unknown>, { name: draft.name, symbol: draft.symbol })
-    const path = `/v1/books/drafts/${id}`
-    const answer = (await this.request<DraftOpenStepsResponse>('POST', `${path}/steps`, { body: { wallet: this.wallet, terms }, auth: 'required' })).data
-    if (!answer.bind || answer.bind.method !== 'PATCH' || answer.bind.path !== path) throw new MancerCheckError('book', "the answer's bind is not this draft's own path on the API")
-    const checked = checkDraftOpenSteps(answer, { wallet: this.wallet, draftId: id, open, ...(draft.factory ? { factory: draft.factory } : {}), deployments: this.bookDeployments })
+    const { answer, checked, path } = await this.bookOpenSteps(id, terms, { name, symbol, factory })
     let bound: Promise<BookDraftResponse | null> = Promise.resolve(null)
     const last = checked.steps.length - 1
     const sent = await this.sendSteps(checked, {

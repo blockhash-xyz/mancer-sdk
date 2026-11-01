@@ -2,7 +2,12 @@ node_modules/
 dist/
 *.tgz
 .env
+.env.*
 *.env
 !.env.example
+.npmrc
+*.pem
+*.key
 agent-ledger.json
+mancer-mcp-ledger.jsonl
 .DS_Store

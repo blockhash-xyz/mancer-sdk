@@ -208,8 +208,13 @@ export class MancerClient {
     }
   }
 
-  /** End every session issued so far (`scope` `account`, the default, or `wallet`), and keep the fresh one returned. */
-  async revokeSessions(scope: 'account' | 'wallet' = 'account'): Promise<Operations['revokeSessions']['response']> {
+  /**
+   * End every session issued so far, and keep the fresh one returned. `scope` is `wallet` by default: this wallet's own
+   * sessions, which any wallet of an account may end. `account` ends every session of every wallet the account holds, and
+   * takes the account's primary wallet: a linked wallet asking it is refused `403 primary-wallet-only`. The scope named is
+   * the one sent.
+   */
+  async revokeSessions(scope: 'account' | 'wallet' = 'wallet'): Promise<Operations['revokeSessions']['response']> {
     const { data } = await this.request<Operations['revokeSessions']['response']>('POST', '/v1/me/sessions/revoke', { body: { scope }, auth: 'required' })
     this.useSession(data.token, this.#session?.account ?? null)
     return data
@@ -283,7 +288,23 @@ export class MancerClient {
       this.#onRateLimit?.(rateLimit)
     }
     const requestId = res.headers.get('x-request-id')
-    const text = await res.text()
+    // a body cut off or timed out after the headers is the request's error, named by its label: for a POST the API may
+    // have done what it asked
+    let text: string
+    try {
+      text = await res.text()
+    } catch (e) {
+      const timedOut = e instanceof Error && (e.name === 'TimeoutError' || e.name === 'AbortError')
+      throw new MancerError({
+        status: res.status,
+        code: timedOut ? SDK_ERROR_CODES.timeout : SDK_ERROR_CODES.network,
+        message: timedOut ? "the API's answer did not arrive whole in time" : "the API's answer could not be read whole",
+        retryable: safeToResend,
+        requestId,
+        rateLimit,
+        request: label,
+      })
+    }
     let json: unknown = undefined
     if (text) {
       try {

@@ -18,5 +18,5 @@
       "@blockhash/mancer-sdk": ["../../packages/sdk/src/index.ts"]
     }
   },
-  "include": ["*.ts", "test", "fork"]
+  "include": ["*.ts", "test"]
 }

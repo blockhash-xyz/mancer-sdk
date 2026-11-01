@@ -48,7 +48,7 @@ export interface AgentConfig {
 type Env = Record<string, string | undefined>
 
 /** The SDK's client options from the settings. A sign-in domain and Books deployments are named only for a local
- * stand-in of the API and the chain (fork/up.sh writes both); unset, the SDK signs in to Mancer's own API alone and holds
+ * stand-in of the API and the chain; unset, the SDK signs in to Mancer's own API alone and holds
  * every Book to the kit's pinned deployments. */
 export function clientOptions(c: Pick<BotConfig, 'api' | 'rpc' | 'signInDomain' | 'bookDeploymentsFile'>): MancerOptions {
   return {

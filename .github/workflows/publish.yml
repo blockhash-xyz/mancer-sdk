@@ -1,55 +1,131 @@
 name: Publish
 
-# Publishes @blockhash/mancer-sdk to npm through npm's trusted publishing: npm trusts this workflow of this repository by
-# its OIDC token, so no npm token is stored anywhere. The package's trusted publisher on npmjs.com names this repository,
-# this file (publish.yml) and the environment below. A version already on npm is skipped, so a run can be repeated.
+# Publishes @blockhash/mancer-sdk and then @blockhash/mancer-mcp to npm through npm's trusted publishing: npm trusts this
+# workflow of this repository by its OIDC token, so no npm token is stored anywhere. Each package's trusted publisher on
+# npmjs.com names this repository, this file (publish.yml) and the environment `npm`.
+#
+# A tag `v<version>` starts it, and only a tag on a commit of main whose two packages are both that version publishes.
+# `check` holds no credential: it installs from the lock with no install script, tests, builds, scans and packs, and
+# hands on the two tarballs it checked with their hashes. `publish` alone may ask GitHub for an OIDC token, in the `npm`
+# environment (a person approves each run, from a `v*` tag alone): it installs nothing but npm, runs no code of this
+# repository, and publishes the very tarballs `check` read. A version already on npm is skipped where its tarball is
+# the same one, so a run can be repeated.
 
 on:
   push:
     tags: ['v*']
-  workflow_dispatch:
 
-permissions:
-  contents: read
-  id-token: write
+permissions: {}
 
 concurrency:
   group: publish
   cancel-in-progress: false
 
 jobs:
-  publish:
+  check:
+    if: github.ref_type == 'tag' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
-    environment: npm
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.ref.outputs.version }}
+      sdk-sha256: ${{ steps.sums.outputs.sdk }}
+      mcp-sha256: ${{ steps.sums.outputs.mcp }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
-          registry-url: https://registry.npmjs.org
-      # trusted publishing needs npm 11.5.1 or newer; Node 22 ships npm 10
-      - run: npm install -g npm@11.21.0
-      - run: npm ci
-      - name: The tag names the package's version
-        if: github.ref_type == 'tag'
+      - name: The tag is a commit on main, and names both packages' version
+        id: ref
         run: |
-          for p in packages/sdk; do
-            v="v$(node -p "require('./$p/package.json').version")"
-            if [ "$v" != "$GITHUB_REF_NAME" ]; then echo "$p is $v, the tag is $GITHUB_REF_NAME"; exit 1; fi
+          set -euo pipefail
+          commit="$(git rev-parse HEAD)"
+          tagged="$(git rev-parse "refs/tags/${GITHUB_REF_NAME}^{commit}")"
+          if [ "$commit" != "$tagged" ]; then echo "::error::the checkout is $commit and the tag names $tagged"; exit 1; fi
+          if ! git merge-base --is-ancestor "$commit" origin/main; then echo "::error::$GITHUB_REF_NAME names $commit, which is not on main"; exit 1; fi
+          version="${GITHUB_REF_NAME#v}"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then echo "::error::$GITHUB_REF_NAME is no version"; exit 1; fi
+          for p in packages/sdk packages/mcp; do
+            v="$(node -p "require('./$p/package.json').version")"
+            if [ "$v" != "$version" ]; then echo "::error::$p is $v, and the tag is $GITHUB_REF_NAME"; exit 1; fi
           done
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Install from the lock, running no package's install script
+        run: npm ci --ignore-scripts
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
       - run: npm run scan
-      - run: npm run pack-check
-      - name: Publish the SDK
+      - name: Pack both packages, check the tarballs as a consumer installs them, and keep them
+        run: node scripts/npm/pack-check.mjs --out "$RUNNER_TEMP/tarballs"
+      - name: The tarballs' hashes, for the publish job
+        id: sums
+        working-directory: ${{ runner.temp }}/tarballs
         run: |
-          for p in packages/sdk; do
-            name="$(node -p "require('./$p/package.json').name")"
-            version="$(node -p "require('./$p/package.json').version")"
-            if npm view "$name@$version" version >/dev/null 2>&1; then
-              echo "$name@$version is on npm already: skipped"
+          set -euo pipefail
+          sha256sum -c SHA256SUMS
+          echo "sdk=$(sha256sum sdk.tgz | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "mcp=$(sha256sum mcp.tgz | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tarballs
+          path: |
+            ${{ runner.temp }}/tarballs/sdk.tgz
+            ${{ runner.temp }}/tarballs/mcp.tgz
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: npm
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      # trusted publishing needs npm 11.5.1 or newer, and Node 22 ships npm 10: npm is the one package this job installs
+      - run: npm install -g npm@11.21.0 --ignore-scripts --no-audit --no-fund
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: tarballs
+          path: tarballs
+      - name: The tarballs are the ones the check job read
+        env:
+          SDK_SHA256: ${{ needs.check.outputs.sdk-sha256 }}
+          MCP_SHA256: ${{ needs.check.outputs.mcp-sha256 }}
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          set -euo pipefail
+          held="$(ls -A tarballs | sort | tr '\n' ' ')"
+          if [ "$held" != "mcp.tgz sdk.tgz " ]; then echo "::error::the artifact holds $held"; exit 1; fi
+          printf '%s  %s\n' "$SDK_SHA256" tarballs/sdk.tgz "$MCP_SHA256" tarballs/mcp.tgz | sha256sum -c -
+          for p in sdk mcp; do
+            name="$(tar -xzOf "tarballs/$p.tgz" package/package.json | jq -r .name)"
+            version="$(tar -xzOf "tarballs/$p.tgz" package/package.json | jq -r .version)"
+            if [ "$name" != "@blockhash/mancer-$p" ] || [ "$version" != "$VERSION" ]; then echo "::error::$p.tgz is $name@$version"; exit 1; fi
+          done
+      - name: Publish the SDK, then the MCP server whose shrinkwrap names it
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          set -euo pipefail
+          for p in sdk mcp; do
+            name="@blockhash/mancer-$p"
+            ours="sha512-$(openssl dgst -sha512 -binary "tarballs/$p.tgz" | base64 -w0)"
+            theirs="$(npm view "$name@$VERSION" dist.integrity --userconfig /dev/null 2>/dev/null || true)"
+            if [ -n "$theirs" ]; then
+              if [ "$theirs" != "$ours" ]; then echo "::error::$name@$VERSION is on npm as $theirs, and the tarball checked is $ours"; exit 1; fi
+              echo "$name@$VERSION is on npm already, the same tarball: skipped"
             else
-              npm publish --provenance --access public -w "$p"
+              npm publish "tarballs/$p.tgz" --provenance --access public --ignore-scripts
             fi
           done

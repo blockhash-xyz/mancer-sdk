@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "allowImportingTsExtensions": true,
+    "types": ["node"],
+    // In this repository the SDK is its source, for the typecheck and for tsx alike (tsx reads this file when it runs
+    // from this folder, with --tsconfig, or through scripts/run-source.mjs): no build of the SDK stands between an edit
+    // and a test. The published package resolves @blockhash/mancer-sdk from node_modules, and tsup's build leaves it
+    // external.
+    "paths": {
+      "@blockhash/mancer-sdk": ["../sdk/src/index.ts"]
+    }
+  },
+  "include": ["src", "test", "scripts"]
+}

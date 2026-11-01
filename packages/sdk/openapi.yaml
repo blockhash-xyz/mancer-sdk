@@ -31,7 +31,7 @@ tags:
   - name: Sign-in
     description: "A wallet's own session: the message it signs, the token it is given, and what the session reads of itself."
   - name: Account
-    description: "The signed-in account's own profile, username, X link and wallets, its follows, blocks, feed, notifications and phones, its app access, sessions, reports, event log and stream ticket, and its deletion, each for a wallet session alone."
+    description: "The signed-in account's own profile, username, X link and wallets, its follows, blocks, feed, notifications and phones, its app access, sessions, reports, event log, stream ticket and webhooks, and its deletion, each for a wallet session alone."
   - name: Profiles
     description: "Any wallet's public profile, its pictures and its follow lists, and the search and lookup of wallets by name."
   - name: Books
@@ -224,6 +224,9 @@ paths:
       tags: [Orders]
       summary: "Get the setup an order needs"
       operationId: getOrderSetup
+      security:
+        - bearer: []
+        - {}
       description: "What an order needs before the maker signs it: on a launch pair, the protocol setup its fills depend on; with `steps=1`, also the wrap and the order book's approval as ready-to-sign steps. Send one missing setup transaction at a time, wait for it, and ask again before signing."
       parameters:
         - name: tokenIn
@@ -312,6 +315,9 @@ paths:
       tags: [Orders]
       summary: "Submit a signed order"
       operationId: submitOrder
+      security:
+        - bearer: []
+        - {}
       description: "Accepts a V3 order signed with the EIP-712 domain `Mancer Orders`, version 3, chain 4663, for the live orders contract, and rests it. The same signed order again answers 200 with `existing: true`. Name the contract the signature binds in `contract`; see [Orders](/api/guides/orders)."
       requestBody:
         required: true
@@ -490,6 +496,9 @@ paths:
       tags: [Orders]
       summary: "Cancel orders by signature"
       operationId: cancelOrders
+      security:
+        - bearer: []
+        - {}
       description: "Stops Mancer's executor from filling up to 50 of one maker's orders on one book, at no gas, on the maker's signature of the message in the body. Only Mancer's executor fills orders, so the signature binds; `cancel(order)` on the chain is the chain's own exit."
       requestBody:
         description: "The maker signs this text with `personal_sign` (EIP-191), hashes lowercase and `issuedAt` within ten minutes of now:\n\n```\nmancer.xyz wants to cancel an order.\n\nOrder: 0x<hash>\nChain ID: 4663\nContract: 0x<the order's contract, lowercase>\nIssued At: <issuedAt as ISO-8601>\n```\n\nFor several orders the first line reads `mancer.xyz wants to cancel N orders.`, with one `Order:` line each. `Contract:` is the `contract` of the order resource."
@@ -546,7 +555,10 @@ paths:
       tags: [Orders]
       summary: "Build an order's on-chain cancel"
       operationId: getOrderCancelSteps
-      description: "`cancel(order)` on the order's own book as a ready-to-sign step, simulated from the maker at the head: no fill can pass it. Answered in the order's own scope (the maker's session, the key that submitted it); anyone else is 404. A Book vault's order is cancelled with the Book's `cancelOrder` step."
+      security:
+        - bearer: []
+        - {}
+      description: "`cancel(order)` on the order's own book as a ready-to-sign step, simulated from the maker at the head: no fill can pass it. Answered in the order's scope (the maker's session, the key that submitted it), or to a caller that names the signed `order` in the body; anyone else is 404."
       parameters:
         - name: hash
           in: path
@@ -555,7 +567,11 @@ paths:
       requestBody:
         content:
           application/json:
-            schema: { type: object, properties: { wallet: { $ref: "#/components/schemas/Address" } } }
+            schema:
+              type: object
+              properties:
+                wallet: { $ref: "#/components/schemas/Address" }
+                order: { type: object, additionalProperties: true, description: "The signed order, every field as signed: needed where the order's scope does not reach the caller (no session or key of the maker's)." }
       responses:
         "200":
           description: "The steps. `simulation.outcome.cancelled` says the book emitted `Cancelled`. `readAfter` is the order's refresh."
@@ -596,6 +612,9 @@ paths:
       tags: [Orders]
       summary: "Build a maker's cancel-all"
       operationId: getOrdersCancelAllSteps
+      security:
+        - bearer: []
+        - {}
       description: "`cancelAll(salt)` on the current V3 book (or the book `contract` names) as a ready-to-sign step: it moves the maker's epoch and voids every order signed under the old one. Make the salt fresh 32 random bytes where the wallet is, never from Mancer."
       requestBody:
         required: true
@@ -2719,7 +2738,7 @@ paths:
       summary: "Get the owners of transactions"
       operationId: postTransactionOwners
       security: []
-      description: "The owner, the maker, each swap's maker, the sender and the purpose of 1 to 200 transactions at once, by hash. A transaction not indexed yet is left out of the answer: ask again in a few seconds."
+      description: "The owner, the maker, each swap's maker, the sender and the purpose of 1 to 200 transactions at once, by hash. A transaction not indexed yet is left out of the answer: ask again in a few seconds. Each transaction not read recently costs one of 200 a second (a burst of 2,000)."
       requestBody:
         required: true
         content:
@@ -2785,6 +2804,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
         "503":
           $ref: "#/components/responses/StoreUnavailable"
   /v1/transfers/steps:
@@ -2792,6 +2812,9 @@ paths:
       tags: [Steps]
       summary: "Build a send"
       operationId: getTransferSteps
+      security:
+        - bearer: []
+        - {}
       description: "A send of ether, a token or an NFT the wallet holds, as a ready-to-sign step simulated from the wallet at the head. `simulation.outcome.received` is what reached the recipient (a taxed token delivers less than it sends), and a revert's `message` says why in plain words."
       requestBody:
         required: true
@@ -2915,6 +2938,9 @@ paths:
                   wallets: { type: [array, "null"], items: { type: object, additionalProperties: true } }
                   createdAt: { type: [integer, "null"] }
                   books: { type: boolean }
+                  deletion:
+                    description: "A linked wallet's request to delete the account, while one stands; null otherwise."
+                    oneOf: [{ $ref: "#/components/schemas/AccountDeletionPending" }, { type: "null" }]
         "401": { $ref: "#/components/responses/SessionRefused" }
   /v1/me/sessions/revoke:
     post:
@@ -2923,14 +2949,14 @@ paths:
       operationId: revokeSessions
       security:
         - { bearer: [] }
-      description: "Ends every session issued so far and returns a fresh session for the caller. `scope` is `account` (the default: every wallet of the account) or `wallet` (this wallet alone). An ended session answers 401 `session-revoked`, and may still be accepted for up to 30 seconds."
+      description: "Ends every session issued so far and returns a fresh session for the caller. `scope` is `account` (every wallet of the account, the default) or `wallet` (this wallet alone). It pauses the webhooks the ended sessions made, and `account` every webhook, for a fresh session to resume."
       requestBody:
         content:
           application/json:
             schema:
               type: object
               properties:
-                scope: { type: string, enum: [account, wallet], default: account }
+                scope: { type: string, enum: [account, wallet], default: account, description: "`account` takes a session of the account's primary wallet." }
       responses:
         "200":
           description: Ended, with a fresh session.
@@ -2939,6 +2965,7 @@ paths:
               schema: { $ref: "#/components/schemas/SessionsRevoked" }
         "400": { description: "`bad-scope`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "401": { $ref: "#/components/responses/SessionRefused" }
+        "403": { description: "`primary-wallet-only`: the account scope takes a session of the account's primary wallet, and a linked wallet ends its own with the wallet scope. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "429": { $ref: "#/components/responses/RateLimited" }
         "503": { description: "`profiles-unavailable` or `auth-unavailable`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /v1/me/wallets/link/nonce:
@@ -3013,7 +3040,7 @@ paths:
               schema: { $ref: "#/components/schemas/WalletLinkResponse" }
         "400": { description: "`bad-address`, `bad-signature`, `bad-message`, `bad-public` or `bad-choice`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { allOf: [{ $ref: "#/components/schemas/Error" }, { type: object, properties: { choices: { $ref: "#/components/schemas/WalletLinkChoices" } } }] } } } }
         "401": { $ref: "#/components/responses/SessionRefused" }
-        "403": { description: "`link-signature` or `link-contract-wallet`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "403": { description: "`link-signature`, `link-contract-wallet`, or `primary-wallet-only`: bringing another account in takes a session of the primary wallet. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "409": { description: "`link-choice`, `link-expired`, `link-busy`, `wallet-already-linked`, `wallet-linked-elsewhere` or `wallets-max`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { allOf: [{ $ref: "#/components/schemas/Error" }, { type: object, properties: { choices: { $ref: "#/components/schemas/WalletLinkChoices" }, max: { type: integer, const: 10 } } }] } } } }
         "429": { $ref: "#/components/responses/RateLimited" }
         "503": { description: "`profiles-unavailable` or `profiles-not-open`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
@@ -3113,6 +3140,238 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+  /v1/me/webhooks:
+    get:
+      tags: [Account]
+      summary: "List the account's webhooks"
+      operationId: listWebhooks
+      security:
+        - { bearer: [] }
+        - { walletKey: [] }
+      description: "The account's webhooks, five at the most, with the kinds a hook may take. No answer carries a hook's secret after the one that made it. See [Webhooks](/api/guides/webhooks)."
+      responses:
+        "200":
+          description: The account's webhooks.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WebhookList" }
+        "401": { $ref: "#/components/responses/SessionRefused" }
+        "403": { description: "`key-scope` or `key-server-only`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { description: "`store-unavailable`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    post:
+      tags: [Account]
+      summary: "Create a webhook"
+      operationId: createWebhook
+      security:
+        - { bearer: [] }
+        - { walletKey: [] }
+      description: "A URL each event of the account's log is POSTed to from now on, in the log's order, signed with the hook's own secret. The secret is in this answer alone. The account's inbox is told the hook was made, and its host."
+      parameters:
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url, events]
+              additionalProperties: false
+              properties:
+                url: { type: string, maxLength: 2048, description: "An https URL on port 443 with no credentials or fragment, whose host is a public name that resolves to public addresses alone, within two seconds." }
+                events:
+                  type: array
+                  minItems: 1
+                  maxItems: 32
+                  description: "The kinds to deliver: a kind of the log (`order.filled`), a family (`order.*`, `notice.*`, `book.*`), or `*` for every kind, later ones included."
+                  items: { type: string }
+            example: { url: "https://bot.example.com/mancer", events: ["order.*", "notice.new"] }
+      responses:
+        "201":
+          description: "The hook, and its secret. A replay of the same `Idempotency-Key` answers `secret: null` and `secretWithheld: true`."
+          headers:
+            Idempotent-Replayed: { $ref: "#/components/headers/IdempotentReplayed" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WebhookCreated" }
+        "400": { description: "`bad-body`, `unknown-field`, `webhook-url-invalid`, `webhook-url-unresolvable`, `webhook-url-not-public` or `webhook-events-invalid`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "401": { $ref: "#/components/responses/SessionRefused" }
+        "403": { description: "`key-scope`: a wallet key needs `records` and `read`. Or `key-server-only`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "409": { description: "`webhooks-max`, or `idempotency-in-progress`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "422": { $ref: "#/components/responses/IdempotencyKeyReused" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { description: "`webhooks-off`, `webhooks-unavailable` or `store-unavailable`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /v1/me/webhooks/{id}:
+    patch:
+      tags: [Account]
+      summary: "Change or pause a webhook"
+      operationId: updateWebhook
+      security:
+        - { bearer: [] }
+        - { walletKey: [] }
+      description: "Changes the kinds a hook takes, or pauses it with `active: false` and resumes it with `active: true`. A resume sends the event the hook waits on at once, then every event it missed. A hook paused because its credential ended resumes with a session alone."
+      parameters:
+        - { name: id, in: path, required: true, description: "The hook's id.", schema: { type: string, pattern: "^wh_[0-9a-f]{24}$" } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                events: { type: array, minItems: 1, maxItems: 32, items: { type: string }, description: "The kinds to deliver, as at the hook's creation. Dropping the kind of the event the hook waits on passes that event over at once." }
+                active: { type: boolean }
+      responses:
+        "200":
+          description: The hook as it stands.
+          content:
+            application/json:
+              schema: { type: object, required: [webhook], properties: { webhook: { $ref: "#/components/schemas/Webhook" } } }
+        "400": { description: "`bad-body`, `unknown-field` or `webhook-events-invalid`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "401": { $ref: "#/components/responses/SessionRefused" }
+        "403": { description: "`key-scope`, `key-server-only`, or `webhook-resume-session-only`: a key resumes no hook its credential's end paused. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "404": { description: "`webhook-not-found`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { description: "`store-unavailable`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    delete:
+      tags: [Account]
+      summary: "Delete a webhook"
+      operationId: deleteWebhook
+      security:
+        - { bearer: [] }
+        - { walletKey: [] }
+      description: "Deletes the hook and its delivery log. Nothing more is sent to it."
+      parameters:
+        - { name: id, in: path, required: true, description: "The hook's id.", schema: { type: string, pattern: "^wh_[0-9a-f]{24}$" } }
+      responses:
+        "200":
+          description: Deleted.
+          content:
+            application/json:
+              schema: { type: object, required: [deleted, id], properties: { deleted: { type: boolean, enum: [true] }, id: { type: string } } }
+        "401": { $ref: "#/components/responses/SessionRefused" }
+        "403": { description: "`key-scope` or `key-server-only`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "404": { description: "`webhook-not-found`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { description: "`store-unavailable`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /v1/me/webhooks/{id}/rotate:
+    post:
+      tags: [Account]
+      summary: "Rotate a webhook's secret"
+      operationId: rotateWebhookSecret
+      security:
+        - { bearer: [] }
+        - { walletKey: [] }
+      description: "A new signing secret, in this answer alone. Deliveries carry a signature under the old secret beside the new one for `keepPreviousSeconds` (a day unless named), so a receiver can take either while it moves."
+      parameters:
+        - { name: id, in: path, required: true, description: "The hook's id.", schema: { type: string, pattern: "^wh_[0-9a-f]{24}$" } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                keepPreviousSeconds: { type: integer, minimum: 0, maximum: 86400, default: 86400, description: "How long the old secret still signs. 0 ends it at once." }
+      responses:
+        "200":
+          description: The hook and its new secret.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [webhook, secret, previousSecretUntil]
+                properties:
+                  webhook: { $ref: "#/components/schemas/Webhook" }
+                  secret: { type: string, description: "The new secret. Keep it on your server; no other answer carries it." }
+                  previousSecretUntil: { type: [string, "null"], format: date-time, description: "Until when the old secret still signs, or null." }
+        "400": { description: "`bad-body` or `unknown-field`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "401": { $ref: "#/components/responses/SessionRefused" }
+        "403": { description: "`key-scope` or `key-server-only`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "404": { description: "`webhook-not-found`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { description: "`webhooks-unavailable` or `store-unavailable`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /v1/me/webhooks/{id}/test:
+    post:
+      tags: [Account]
+      summary: "Send a test delivery"
+      operationId: testWebhook
+      security:
+        - { bearer: [] }
+        - { walletKey: [] }
+      description: "POSTs a `webhook.ping` to the hook now, signed as any delivery, and answers how it went. Nothing is recorded, and a paused hook takes it too."
+      parameters:
+        - { name: id, in: path, required: true, description: "The hook's id.", schema: { type: string, pattern: "^wh_[0-9a-f]{24}$" } }
+      responses:
+        "200":
+          description: "How the POST went. A receiver that failed still answers 200 here, with `delivered: false`."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WebhookTry" }
+        "401": { $ref: "#/components/responses/SessionRefused" }
+        "403": { description: "`key-scope` or `key-server-only`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "404": { description: "`webhook-not-found`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "409": { description: "`webhook-busy`: a test or a retry of the account's webhooks is running. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { description: "`webhooks-off`, `webhooks-unavailable` or `store-unavailable`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /v1/me/webhooks/{id}/deliveries:
+    get:
+      tags: [Account]
+      summary: "List a webhook's deliveries"
+      operationId: listWebhookDeliveries
+      security:
+        - { bearer: [] }
+        - { walletKey: [] }
+      description: "The 100 deliveries the hook tried last, the one tried last first: each event's state, its tries, and its last status and error."
+      parameters:
+        - { name: id, in: path, required: true, description: "The hook's id.", schema: { type: string, pattern: "^wh_[0-9a-f]{24}$" } }
+      responses:
+        "200":
+          description: The hook's deliveries.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [webhook, held, heldReason, deliveries]
+                properties:
+                  webhook: { type: string }
+                  held: { type: boolean, description: "Mancer holds the hook's deliveries now, as `GET /v1/me/webhooks` says." }
+                  heldReason: { type: [string, "null"], enum: [secret, previous-secret, no-server-key, null] }
+                  deliveries: { type: array, items: { $ref: "#/components/schemas/WebhookDelivery" } }
+        "401": { $ref: "#/components/responses/SessionRefused" }
+        "403": { description: "`key-scope` or `key-server-only`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "404": { description: "`webhook-not-found`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { description: "`store-unavailable`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /v1/me/webhooks/{id}/deliveries/{seq}/retry:
+    post:
+      tags: [Account]
+      summary: "Redeliver an event"
+      operationId: retryWebhookDelivery
+      security:
+        - { bearer: [] }
+        - { walletKey: [] }
+      description: "POSTs an event the hook has passed again now, by its `seq`, and records the try in its delivery log. An event the hook has not reached yet answers 409 `webhook-event-pending`, and one from before the hook was made 409 `webhook-event-before-hook`."
+      parameters:
+        - { name: id, in: path, required: true, description: "The hook's id.", schema: { type: string, pattern: "^wh_[0-9a-f]{24}$" } }
+        - { name: seq, in: path, required: true, description: "The event's place in the account's log.", schema: { type: string, pattern: "^[1-9][0-9]{0,17}$" } }
+      responses:
+        "200":
+          description: "How the POST went, and the delivery as its log now holds it."
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/WebhookTry" }
+                  - { type: object, properties: { delivery: { oneOf: [{ $ref: "#/components/schemas/WebhookDelivery" }, { type: "null" }] } } }
+        "400": { description: "`bad-seq`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "401": { $ref: "#/components/responses/SessionRefused" }
+        "403": { description: "`key-scope` or `key-server-only`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "404": { description: "`webhook-not-found` or `webhook-event-not-found`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "409": { description: "`webhook-event-pending`, `webhook-event-before-hook`, `webhook-event-not-subscribed` or `webhook-busy`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { description: "`webhooks-off`, `webhooks-unavailable` or `store-unavailable`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /v1/users/{id}/report:
     post:
       tags: [Account]
@@ -3161,7 +3420,7 @@ paths:
       operationId: deleteAccount
       security:
         - { bearer: [] }
-      description: "Erases the session's own account: its username, profile, X link, pictures, follows, blocks, inbox and phones. What its wallets did on the chain stays. Every session of every wallet it held ends with it, and signing in again starts an empty account."
+      description: "The primary wallet's session erases the account at once: its username, profile, follows, inbox, votes, theses, drafts and every session. A linked wallet's session asks instead: the account is erased seven days later unless the primary cancels. Asked again, it answers the request that stands."
       requestBody:
         required: true
         content:
@@ -3181,8 +3440,43 @@ paths:
                 required: [deleted]
                 properties:
                   deleted: { type: boolean, description: "False where there was no account to erase." }
+        "202":
+          description: Asked by a linked wallet. The account is erased at `deletesAt` unless the request is cancelled first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deleted, deletion]
+                properties:
+                  deleted: { type: boolean, enum: [false] }
+                  deletion: { $ref: "#/components/schemas/AccountDeletionPending" }
         "400": { description: "`confirm-delete`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "401": { $ref: "#/components/responses/SessionRefused" }
+        "403": { description: "`key-session-only`: a wallet key never deletes an account. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { description: "`profiles-unavailable`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /v1/me/account/deletion:
+    delete:
+      tags: [Account]
+      summary: "Cancel a request to delete the account"
+      operationId: cancelAccountDeletion
+      security:
+        - { bearer: [] }
+      description: "Cancels a linked wallet's request to delete the account. The primary wallet cancels any request, and the wallet that asked cancels its own. Unlinking that wallet cancels it too."
+      responses:
+        "200":
+          description: Cancelled.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [cancelled, deletion]
+                properties:
+                  cancelled: { type: boolean, enum: [true] }
+                  deletion: { $ref: "#/components/schemas/AccountDeletionPending" }
+        "401": { $ref: "#/components/responses/SessionRefused" }
+        "403": { description: "`primary-wallet-only`: another linked wallet's request is the primary's to cancel. `key-session-only`: a wallet key cancels nothing. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "404": { description: "`deletion-not-pending`: no request to delete the account stands. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "429": { $ref: "#/components/responses/RateLimited" }
         "503": { description: "`profiles-unavailable`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /v1/users:
@@ -3468,7 +3762,7 @@ paths:
       operationId: putOwnAvatar
       security:
         - { bearer: [] }
-      description: "Sets the profile's picture from the body's image bytes and answers the owner's view. Twenty uploads an hour for an account, the banner's included."
+      description: "Sets the profile's picture from the body's image bytes and answers the owner's view. It is stored as a WebP written again from its pixels, so none of the file's metadata is kept. Twenty uploads an hour for an account, the banner's included."
       requestBody:
         required: true
         description: "The image's bytes, 512 KB at the most, sent with `Content-Type` `image/png`, `image/jpeg`, `image/webp` or `image/gif`: 16 to 4,096 pixels a side, and an animation at most 200 frames and 50,000,000 pixels in all."
@@ -3510,7 +3804,7 @@ paths:
       operationId: putOwnBanner
       security:
         - { bearer: [] }
-      description: "Sets the profile's banner from the body's image bytes and answers the owner's view. Twenty uploads an hour for an account, the picture's included."
+      description: "Sets the profile's banner from the body's image bytes and answers the owner's view. It is stored as a WebP written again from its pixels, so none of the file's metadata is kept. Twenty uploads an hour for an account, the picture's included."
       requestBody:
         required: true
         description: "The image's bytes, 1 MB at the most, sent with `Content-Type` `image/png`, `image/jpeg`, `image/webp` or `image/gif`: 16 to 4,096 pixels a side, and an animation at most 200 frames and 50,000,000 pixels in all."
@@ -3685,6 +3979,7 @@ paths:
               schema: { $ref: "#/components/schemas/AccountWalletsResponse" }
         "400": { description: "`bad-address`, `bad-body`, `unknown-field`, `bad-public` or `bad-label`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "401": { $ref: "#/components/responses/SessionRefused" }
+        "403": { description: "`primary-wallet-only`: a wallet shows or hides itself, and another wallet is the primary wallet's to show or hide. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "404": { description: "`wallet-not-linked`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "409": { description: "`primary-wallet`: the account's own wallet is always public. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "429": { $ref: "#/components/responses/RateLimited" }
@@ -3695,7 +3990,7 @@ paths:
       operationId: unlinkAccountWallet
       security:
         - { bearer: [] }
-      description: "Lets a linked wallet go: from then on it is a wallet no account holds, and its sessions act for nothing. The account's own wallet is never unlinked. Answers the account's wallets."
+      description: "Lets a linked wallet go: it is then a wallet no account holds, and its sessions and wallet keys end for good. A wallet unlinks itself, and another is the primary wallet's to let go. Answers the account's wallets."
       parameters:
         - name: address
           in: path
@@ -3710,6 +4005,7 @@ paths:
               schema: { $ref: "#/components/schemas/AccountWalletsResponse" }
         "400": { description: "`bad-address`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "401": { $ref: "#/components/responses/SessionRefused" }
+        "403": { description: "`primary-wallet-only`: another wallet is the primary wallet's to unlink. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "404": { description: "`wallet-not-linked`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "409": { description: "`primary-wallet`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "429": { $ref: "#/components/responses/RateLimited" }
@@ -4570,7 +4866,7 @@ paths:
       security:
         - {}
         - { bearer: [] }
-      description: "A buy or a sale on the Book's curve as a direct call to the raise contract from the taker's wallet, with the raise contract's own math and that minute's tax. `tx` and `approval` need a session or an API key. A quote in a closing window's last 30 seconds is refused `window-closing`."
+      description: "A buy or a sale on the Book's curve as a direct call to the raise contract from the taker's wallet, with the raise contract's own math and that minute's tax. `tx` and `approval` need a session, an API key or `steps=1`. A quote in a closing window's last 30 seconds is refused `window-closing`."
       parameters:
         - { $ref: "#/components/parameters/BookToken" }
         - name: side
@@ -5102,6 +5398,9 @@ paths:
       tags: [Books]
       summary: "Build a Book's act"
       operationId: getBookSteps
+      security:
+        - bearer: []
+        - {}
       description: "Any on-chain act of a Book as ready-to-sign steps, with the exact approval it needs where the wallet's allowance falls short, once who may send it now is checked. A vault trade carries Mancer's signed quote from `vault-quote`; this route signs nothing. See [Ready-to-sign steps](/api/guides/steps)."
       parameters: [{ $ref: "#/components/parameters/BookToken" }]
       requestBody:
@@ -5664,7 +5963,7 @@ paths:
       operationId: changeApiKey
       security:
         - { bearer: [] }
-      description: "Changes a key's scopes, or pauses it (`active: false`) and resumes it. A pause ends the key at once on the server that answers it, and within 30 seconds on every other. A session alone changes a key."
+      description: "Changes a key's scopes, or pauses it (`active: false`) and resumes it. A pause ends the key at once on the server that answers, within 30 seconds on every other, and pauses the webhooks the key made. A session alone changes a key."
       requestBody:
         required: true
         content:
@@ -5677,13 +5976,16 @@ paths:
                 active: { type: boolean }
       responses:
         "200":
-          description: The key as it stands now.
+          description: "The key as it stands now, and the webhooks its pause paused."
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ApiKey" }
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/ApiKey" }
+                  - { type: object, required: [pausedWebhooks], properties: { pausedWebhooks: { type: array, items: { $ref: "#/components/schemas/PausedWebhook" } } } }
         "400": { description: "`bad-scopes`, `unknown-field` or `bad-body`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "401": { $ref: "#/components/responses/SessionRefused" }
-        "403": { description: "`key-managed-by-mancer`, `key-session-only` or `key-server-only`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "403": { description: "`key-managed-by-mancer`, `key-session-only`, `key-server-only`, or `primary-wallet-only`: another wallet's key is the primary wallet's to change. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "404": { description: "`key-not-found`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "409": { description: "`keys-max`: a resume past three keys in force; or `key-name-ambiguous`: ask by the `id` its detail lists. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "429": { $ref: "#/components/responses/RateLimited" }
@@ -5694,7 +5996,7 @@ paths:
       operationId: deleteApiKey
       security:
         - { bearer: [] }
-      description: "Deletes a key for good: it ends at once on the server that answers, and within 30 seconds on every other. A key Mancer issued is Mancer's to change. A session alone deletes a key."
+      description: "Deletes a key for good: it ends at once on the server that answers, and within 30 seconds on every other. The webhooks it made are paused for a session to resume. A session alone deletes a key."
       responses:
         "200":
           description: Deleted.
@@ -5702,13 +6004,14 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [deleted, name, id]
+                required: [deleted, name, id, pausedWebhooks]
                 properties:
                   deleted: { type: boolean, enum: [true] }
                   name: { type: string }
                   id: { type: string }
+                  pausedWebhooks: { type: array, items: { $ref: "#/components/schemas/PausedWebhook" }, description: "The webhooks the key made, paused." }
         "401": { $ref: "#/components/responses/SessionRefused" }
-        "403": { description: "`key-managed-by-mancer`, `key-session-only` or `key-server-only`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "403": { description: "`key-managed-by-mancer`, `key-session-only`, `key-server-only`, or `primary-wallet-only`: another wallet's key is the primary wallet's to change. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "404": { description: "`key-not-found`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "409": { description: "`key-name-ambiguous`: ask by the `id` its detail lists. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "429": { $ref: "#/components/responses/RateLimited" }
@@ -6178,7 +6481,7 @@ components:
         bucket:
           type: string
           description: "On a 429 `rate-limited`, the bucket that refused."
-          enum: [key, session, ip, ip-ceiling, art, estimate, auth, discover, discover-ceiling, account-write, follow-write, user-search, user-lookup, user-follows, username-check]
+          enum: [key, key-account, session, ip, ip-ceiling, art, estimate, build, build-ceiling, auth, discover, discover-ceiling, account-write, follow-write, user-search, user-lookup, user-follows, username-check, steps]
         detail: { type: object, additionalProperties: true, description: "What the refusal names, by code." }
     ErrorCode:
       type: string
@@ -6228,6 +6531,7 @@ components:
         - bad-request
         - bad-scope
         - bad-scopes
+        - bad-seq
         - bad-show-portfolio
         - bad-signature
         - bad-status
@@ -6272,6 +6576,7 @@ components:
         - conflict
         - contract-not-served
         - deadline-past-unlock
+        - deletion-not-pending
         - deployment-unsupported
         - description-blank
         - description-length
@@ -6415,6 +6720,7 @@ components:
         - pool-take-too-high
         - price-moved
         - primary-wallet
+        - primary-wallet-only
         - profile-field-held
         - profiles-not-open
         - profiles-unavailable
@@ -6531,6 +6837,20 @@ components:
         - wallet-not-linked
         - wallet-required
         - wallets-max
+        - webhook-busy
+        - webhook-event-before-hook
+        - webhook-event-not-found
+        - webhook-event-not-subscribed
+        - webhook-event-pending
+        - webhook-events-invalid
+        - webhook-not-found
+        - webhook-resume-session-only
+        - webhook-url-invalid
+        - webhook-url-not-public
+        - webhook-url-unresolvable
+        - webhooks-max
+        - webhooks-off
+        - webhooks-unavailable
         - website-social
         - weth-spot
         - window-closed
@@ -6674,6 +6994,7 @@ components:
         token: { type: string, description: "The calling wallet's fresh session." }
         issuedAt: { type: integer, description: "The fresh session's issue, a second past the cut." }
         expiresAt: { type: integer, description: "Seven days past `issuedAt`." }
+        pausedWebhooks: { type: array, items: { $ref: "#/components/schemas/PausedWebhook" }, description: "The webhooks paused with the sessions. Resume each with the fresh session." }
     ProfileReportResponse:
       type: object
       required: [report, duplicate]
@@ -6778,7 +7099,7 @@ components:
         referenceShortfallBps: { type: [integer, "null"] }
         poolFeeBps: { type: integer, description: "The largest single-pool take on the route, in bps: a static LP fee, a dynamic pool's last swap fee, a hook's modeled take on top. Absent when unknown." }
         poolFeeShareBps: { type: integer, description: "The share of the trade, in bps, that runs through the pool `poolFeeBps` names. Absent where the route does not say, which reads as the whole trade." }
-        routeFeeBps: { type: integer, description: "What every pool of the route takes of the whole trade, in bps: each pool's take on the share of the trade that runs through it, summed. Absent where the route does not say." }
+        routeFeeBps: { type: integer, description: "What every pool of the route takes of the whole trade, in bps: each pool's take of what reaches it, on the share of the trade that runs through it. Absent where the route does not say." }
         outsideAgrees: { type: boolean, description: "An outside aggregator quoted the same trade within 5% of this quote (on `external=1` requests alone), so a reference shortfall is the reference's. Present (true) only then." }
         sellTaxBps: { type: integer, description: "Share of a later sale the output token itself keeps, in bps, when its sale was simulated and measured. Absent otherwise." }
         sellBlockedReason: { type: string, description: "Why the output token's simulated sale failed, from the chain. Present only with reasonCode sell-blocked." }
@@ -7111,7 +7432,7 @@ components:
         trades24h: { type: integer }
         pools24h: { type: integer, description: "Pools that traded in the last 24 hours." }
         pools: { type: integer, description: "Pools with a depth row (the ones with a cash side)." }
-        priceConfidence: { type: [string, "null"], description: "`high` or `low` (a defended price, by the pools behind it), `day`, `last`, or null without a price." }
+        priceConfidence: { type: [string, "null"], description: "`high` or `low` (a defended price, by the pools behind it), `day`, `last`, `pool` (its market pool's price, before any trade), or null without a price." }
         priceDepthUsd: { type: [number, "null"], description: "The measured depth behind the price; 0 means it rests on volume alone." }
         firstBlock: { type: integer }
         firstSeen: { type: [integer, "null"], description: "Unix seconds." }
@@ -9193,7 +9514,7 @@ components:
         payoutPerTokenWei:
           description: What a whole token would redeem for.
           anyOf: [{ $ref: "#/components/schemas/BooksUnits" }, { type: "null" }]
-        partial: { type: boolean, description: A holding's value did not read. }
+        partial: { type: boolean, description: "Always false: a Book's value always reads whole. Kept for clients built before it." }
         asOf: { $ref: "#/components/schemas/BooksHead" }
     BookSettlementFinal:
       type: object
@@ -9780,7 +10101,7 @@ components:
           type: [number, "null"]
           description: "The trading pot's return after the close fee and the traders' cut: the holders' pot less the LP pot, over the cost basis. The LP pot is the locked liquidity's own principal."
         priceToBackingBps: { type: [number, "null"], description: The market price over the backing. }
-        partial: { type: boolean, description: A holding's value did not read. }
+        partial: { type: boolean, description: "Always false: a Book's value always reads whole. Kept for clients built before it." }
         approx: { type: boolean, description: "A holding is valued at a reference price, not a route, or at a sale priced for another amount and scaled." }
         asOf: { $ref: "#/components/schemas/BooksHead" }
     BookValueSource:
@@ -10896,10 +11217,10 @@ components:
         seq: { type: string, description: "The event's place in the log, a decimal string. Pass it as `since` to read past it." }
         kind:
           type: string
-          enum: [order.placed, order.filled, order.completed, order.cancelled, order.expired, order.reopened, order.refused, notice.new, notice.counted, book.next, book.pending, book.redeemable, book.cut-owed]
+          enum: [order.placed, order.filled, order.completed, order.cancelled, order.expired, order.reopened, order.refused, notice.new, notice.counted, book.next, book.pending, book.redeemable, book.cut-owed, account.deletion-requested, account.deletion-cancelled]
         account: { $ref: "#/components/schemas/Address" }
-        wallet: { description: "The account's wallet the event is about: the order's maker, the notice's recipient, or the Book's party.", allOf: [{ $ref: "#/components/schemas/Address" }] }
-        key: { type: string, description: "The event's subject: an order's hash, a notice's id, or a Book's token." }
+        wallet: { description: "The account's wallet the event is about: the order's maker, the notice's recipient, the Book's party, or the account's own.", allOf: [{ $ref: "#/components/schemas/Address" }] }
+        key: { type: string, description: "The event's subject: an order's hash, a notice's id, a Book's token, or the account." }
         at: { type: string, format: date-time, description: "When the fact was written." }
         data:
           oneOf:
@@ -10907,6 +11228,17 @@ components:
             - $ref: "#/components/schemas/AccountOrderFillData"
             - $ref: "#/components/schemas/AccountNoticeEventData"
             - $ref: "#/components/schemas/AccountBookEventData"
+            - $ref: "#/components/schemas/AccountDeletionEventData"
+    AccountDeletionEventData:
+      type: object
+      description: "`account.deletion-requested` and `account.deletion-cancelled`: a linked wallet's request to delete the account."
+      required: [requestedBy, requestedAt, deletesAt]
+      properties:
+        requestedBy: { $ref: "#/components/schemas/Address" }
+        requestedAt: { type: integer, description: "Unix seconds the wallet asked." }
+        deletesAt: { type: integer, description: "Unix seconds the account is erased, had the request stood." }
+        cancelledBy: { description: "`account.deletion-cancelled` alone: the wallet that cancelled it.", allOf: [{ $ref: "#/components/schemas/Address" }] }
+        reason: { type: string, enum: [primary, requester, unlinked], description: "`account.deletion-cancelled` alone: the primary wallet, the wallet that asked, or that wallet's unlink." }
     AccountOrderEventData:
       type: object
       description: "`order.placed`, `order.completed`, `order.cancelled`, `order.expired`, `order.reopened` and `order.refused`."
@@ -10946,12 +11278,14 @@ components:
       required: [id, kind, actor, at, trades]
       properties:
         id: { type: string, description: "The notice's id in the account's inbox." }
-        kind: { type: string, enum: [follow, trade] }
-        actor: { description: "Who followed, or whose trades these are.", allOf: [{ $ref: "#/components/schemas/Address" }] }
+        kind: { type: string, enum: [follow, trade, webhook, account-deletion] }
+        actor: { description: "Who followed, or whose trades these are; for a webhook notice, the account's own wallet; for a deletion's, the wallet that asked or cancelled.", allOf: [{ $ref: "#/components/schemas/Address" }] }
         at: { type: integer, description: "Unix seconds: the follow's time, or the newest trade's block time." }
         trades: { type: integer, description: "A trade notice's count of trades (1 for a follow)." }
         txHash: { type: [string, "null"], description: "The newest trade's transaction." }
         trade: { type: [object, "null"], additionalProperties: true, description: "The newest trade, as the wallet's own trades list it (`GET /v1/wallets/{address}/swaps`)." }
+        webhook: { description: "A webhook notice's hook, in place of `trade`: a hook made or paused.", allOf: [{ $ref: "#/components/schemas/WebhookNotice" }] }
+        deletion: { description: "An account deletion's notice, in place of `trade`: the request made or cancelled.", allOf: [{ $ref: "#/components/schemas/DeletionNotice" }] }
     AccountBookEventData:
       type: object
       description: "`book.next`, `book.pending`, `book.redeemable` and `book.cut-owed`: the Book, its phase at the block it was read at, and the kind's own fields."
@@ -10993,6 +11327,97 @@ components:
         sessionExpiresAt: { type: string, format: date-time, description: "When the session ends, and the channel with it." }
         socket: { type: string, description: "The socket to join on." }
         head: { type: string, description: "The account's newest event's `seq` now." }
+    Webhook:
+      type: object
+      description: "One of the account's webhooks. No answer carries its secret after the one that made it."
+      required: [id, url, events, active, paused, lastSeq, lastDeliveredAt, failing, previousSecretUntil, createdBy, createdAt, held, heldReason]
+      properties:
+        id: { type: string, pattern: "^wh_[0-9a-f]{24}$" }
+        url: { type: string }
+        events: { type: array, items: { type: string }, description: "The kinds it delivers: kinds of the log, families such as `order.*`, or `*`." }
+        active: { type: boolean }
+        paused:
+          type: [object, "null"]
+          description: "Why and when it was paused. `revoked`, `key`, `unlinked` and `merged`: the credential it stood on ended, or a merge brought it in, and a session alone resumes it."
+          required: [reason, at]
+          properties:
+            reason: { type: string, enum: [owner, failing, revoked, key, unlinked, merged] }
+            at: { type: string, format: date-time }
+        lastSeq: { type: string, description: "The last event of the account's log it delivered or passed over." }
+        lastDeliveredAt: { type: [string, "null"], format: date-time }
+        failing:
+          type: [object, "null"]
+          description: "The run of failures it is in, where it is in one."
+          required: [since, attempts, nextAttemptAt, lastStatus, lastError]
+          properties:
+            since: { type: string, format: date-time }
+            attempts: { type: integer, description: "The tries of the event it waits on." }
+            nextAttemptAt: { type: [string, "null"], format: date-time, description: "The next try of the event it waits on, or null while the hook is paused." }
+            lastStatus: { type: [integer, "null"], description: "The receiver's last HTTP status, or null where none came." }
+            lastError: { type: [string, "null"], description: "Why the last try failed, with an excerpt of the answer's body." }
+        previousSecretUntil: { type: [string, "null"], format: date-time, description: "Until when the secret before its last rotation still signs." }
+        createdBy: { $ref: "#/components/schemas/WebhookCredential" }
+        createdAt: { type: string, format: date-time }
+        held: { type: boolean, description: "Mancer holds its deliveries for a fault of its own, never counted against the hook. Its events wait, and go out in order once mended." }
+        heldReason:
+          type: [string, "null"]
+          enum: [secret, previous-secret, no-server-key, null]
+          description: "Why it is held: its secret, or the secret before its rotation, cannot be opened, or the server signs nothing. Null while it is not held."
+    WebhookCredential:
+      type: object
+      description: "The credential a hook stands on: the one that made it, or the session that resumed it after that one ended."
+      required: [wallet, key, sessionIssuedAt]
+      properties:
+        wallet: { type: [string, "null"], description: "The credential's wallet." }
+        key: { type: [string, "null"], description: "A key's name, or null for a session." }
+        sessionIssuedAt: { type: [string, "null"], format: date-time, description: "When the session was issued, or null for a key." }
+    PausedWebhook:
+      type: object
+      description: "A webhook paused because a credential ended: its id and its URL's host, never its path."
+      required: [id, host]
+      properties:
+        id: { type: string }
+        host: { type: string }
+    WebhookCreated:
+      type: object
+      required: [webhook, secret]
+      properties:
+        webhook: { $ref: "#/components/schemas/Webhook" }
+        secret: { type: [string, "null"], description: "`whsec_…`, the hook's signing secret. Keep it on your server; no other answer carries it." }
+        secretWithheld: { type: boolean, description: "True on an `Idempotency-Key` replay, which never carries the secret." }
+    WebhookList:
+      type: object
+      required: [account, webhooks, max, kinds, on]
+      properties:
+        account: { $ref: "#/components/schemas/Address" }
+        webhooks: { type: array, items: { $ref: "#/components/schemas/Webhook" } }
+        max: { type: integer, const: 5 }
+        kinds: { type: array, items: { type: string }, description: "Every kind of the account's log." }
+        on: { type: boolean, description: "False while Mancer has deliveries switched off; they resume where they stopped." }
+    WebhookTry:
+      type: object
+      required: [webhook, delivered, status, error, ms]
+      properties:
+        webhook: { type: string }
+        delivered: { type: boolean, description: "The receiver answered a 2xx within ten seconds." }
+        status: { type: [integer, "null"], description: "The receiver's HTTP status, or null where none came." }
+        error: { type: [string, "null"], description: "Why it failed: the status with an excerpt of the body, a refused redirect, a host that is not public, or no answer." }
+        ms: { type: integer }
+    WebhookDelivery:
+      type: object
+      required: [seq, kind, state, attempts, status, lastError, firstAttemptAt, lastAttemptAt, deliveredAt, nextAttemptAt, redeliveries]
+      properties:
+        seq: { type: string, description: "The event's place in the account's log." }
+        kind: { type: string }
+        state: { type: string, enum: [delivered, retrying, failed, skipped], description: "`failed`: the hook was paused on it after a day of failures. `skipped`: it waited on a retry and the hook stopped taking its kind." }
+        attempts: { type: integer, description: "Every try, redeliveries among them." }
+        status: { type: [integer, "null"], description: "The last try's HTTP status." }
+        lastError: { type: [string, "null"], description: "The last failure's reason, kept after a later try lands." }
+        firstAttemptAt: { type: string, format: date-time }
+        lastAttemptAt: { type: string, format: date-time }
+        deliveredAt: { type: [string, "null"], format: date-time }
+        nextAttemptAt: { type: [string, "null"], format: date-time, description: "The next try of a delivery that waits on a retry, while its hook is active; null otherwise." }
+        redeliveries: { type: integer }
     TokenVoteSummary:
       type: object
       description: A token's votes and how many theses stand on it.
@@ -11109,6 +11534,14 @@ components:
           properties:
             required: { type: boolean, const: true }
             because: { type: array, items: { type: string, enum: [follows, blocks, username, x, wallets] } }
+        webhooks: { $ref: "#/components/schemas/MergedWebhooks" }
+    MergedWebhooks:
+      type: object
+      description: "The joining account's webhooks: those that come in paused, for a session to resume, and those past the five, which go with it."
+      required: [paused, left]
+      properties:
+        paused: { type: array, items: { $ref: "#/components/schemas/PausedWebhook" } }
+        left: { type: array, items: { $ref: "#/components/schemas/PausedWebhook" } }
     WalletLinkResponse:
       type: object
       required: [account, wallet, wallets, max, linked]
@@ -11154,6 +11587,11 @@ components:
                     follows: { type: integer }
                     alerts: { type: integer }
                     blocks: { type: integer }
+                - { type: "null" }
+            webhooks:
+              description: "A merge's webhooks; null for a plain link."
+              anyOf:
+                - { $ref: "#/components/schemas/MergedWebhooks" }
                 - { type: "null" }
     FollowCounts:
       type: object
@@ -11357,6 +11795,17 @@ components:
         open: { type: boolean, description: "The account's profile writes are open." }
         opening: { type: string, enum: [everyone, beta, staked, stake, unread, closed], description: "Why the writes are open, or what would open them: `stake` (a staked Chain Mancer) or `closed`. `unread`: the stake could not be read just now." }
         usernameClaim: { type: string, enum: [everyone, x, staked, needs-x-or-stake, opened-elsewhere, unread], description: "Whether a username claim is open, and by which, or what it needs. See `PUT /v1/me/username`." }
+        deletion:
+          description: "A linked wallet's request to delete the account, while one stands; null otherwise."
+          oneOf: [{ $ref: "#/components/schemas/AccountDeletionPending" }, { type: "null" }]
+    AccountDeletionPending:
+      type: object
+      description: "A linked wallet's request to delete the account. The account is erased at `deletesAt` unless the primary wallet cancels it, the wallet that asked cancels it, or that wallet is unlinked first."
+      required: [requestedBy, deletesAt]
+      properties:
+        requestedBy: { description: "The linked wallet that asked.", allOf: [{ $ref: "#/components/schemas/Address" }] }
+        requestedAt: { type: integer, description: "Unix seconds it asked. On the request's own answers." }
+        deletesAt: { type: integer, description: "Unix seconds the account is erased: seven days after the request." }
     OwnerProfileRefreshed:
       description: "The account's own view, and what the refresh changed."
       allOf:
@@ -11410,6 +11859,8 @@ components:
         max: { type: integer, const: 10, description: The most wallets an account holds. }
         unlinked: { $ref: "#/components/schemas/Address", description: "An unlink: the wallet let go." }
         sessionEnded: { type: boolean, description: "An unlink: the session's own wallet was the one let go, so this session acts for nothing more." }
+        pausedWebhooks: { type: array, items: { $ref: "#/components/schemas/PausedWebhook" }, description: "An unlink: the webhooks the wallet's sessions and keys made, paused." }
+        deletionCancelled: { type: boolean, description: "An unlink: the wallet's request to delete the account ended with it." }
     XLinkStart:
       type: object
       required: [authorizeUrl, expiresAt]
@@ -11461,16 +11912,37 @@ components:
         nextBefore: { type: [string, "null"], description: "The cursor of the next older page, opaque. Null once the feed ends." }
     Notice:
       type: object
-      description: "One notification: a wallet followed the account (`follow`), or a wallet with trade alerts on traded (`trade`)."
+      description: "One notification: a follow (`follow`), a trade alert (`trade`), a webhook made or paused (`webhook`), or a linked wallet's request to delete the account made or cancelled (`account-deletion`)."
       required: [id, kind, at, actor, unread]
       properties:
         id: { type: string, description: "The notice's id, a decimal string: higher is newer." }
-        kind: { type: string, enum: [follow, trade] }
+        kind: { type: string, enum: [follow, trade, webhook, account-deletion] }
         at: { type: integer, description: "Unix seconds: the follow's time, or the newest trade's block time." }
         actor: { description: "Who followed, or whose trades these are.", allOf: [{ $ref: "#/components/schemas/Address" }] }
         unread: { type: boolean }
         trades: { type: integer, minimum: 1, description: "A trade notice's count of trades: a wallet's trades within ten minutes are one notice while it is unread. Absent on a follow." }
         trade: { description: "A trade notice's newest trade, as the wallet's own trades list it. Absent on a follow.", allOf: [{ $ref: "#/components/schemas/WalletTrade" }] }
+        webhook: { description: "A webhook notice's hook. Its actor is the account's own wallet.", allOf: [{ $ref: "#/components/schemas/WebhookNotice" }] }
+        deletion: { description: "An account deletion's notice: the request. Its actor is the wallet that asked or cancelled.", allOf: [{ $ref: "#/components/schemas/DeletionNotice" }] }
+    DeletionNotice:
+      type: object
+      required: [state, requestedBy, deletesAt, cancelledBy, reason]
+      properties:
+        state: { type: string, enum: [requested, cancelled] }
+        requestedBy: { description: "The linked wallet that asked.", allOf: [{ $ref: "#/components/schemas/Address" }] }
+        deletesAt: { type: integer, description: "Unix seconds the account goes, had the request stood." }
+        cancelledBy: { oneOf: [{ $ref: "#/components/schemas/Address" }, { type: "null" }], description: "A cancel's wallet." }
+        reason: { type: [string, "null"], enum: [primary, requester, unlinked, null], description: "A cancel's cause: the primary wallet, the wallet that asked, or that wallet's unlink." }
+    WebhookNotice:
+      type: object
+      required: [id, host, reason, lastError, seq]
+      properties:
+        id: { type: string, description: "The hook's id." }
+        host: { type: string, description: "The host of the hook's URL, never its path." }
+        reason: { type: string, enum: [failing, created], description: "`created`: the hook was made. `failing`: it was paused after a day of failed deliveries." }
+        lastError: { type: [string, "null"] }
+        seq: { type: [string, "null"], description: "The event it was paused on, which it sends first once resumed." }
+        by: { description: "A made hook's credential.", allOf: [{ $ref: "#/components/schemas/WebhookCredential" }] }
     NoticesPage:
       type: object
       required: [notifications, users, viewer, unread, nextBefore]

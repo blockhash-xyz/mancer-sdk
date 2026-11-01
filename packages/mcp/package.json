@@ -1,0 +1,78 @@
+{
+  "name": "@blockhash/mancer-mcp",
+  "version": "0.2.0",
+  "description": "Mancer's MCP server: an AI agent reads Mancer and builds swaps, sends, orders and Books acts as unsigned transactions its own wallet signs. It signs nothing and holds no key. Over stdio, or over Streamable HTTP as Mancer runs it at mcp.mancer.xyz",
+  "license": "MIT",
+  "author": "Blockhash",
+  "type": "module",
+  "bin": {
+    "mancer-mcp": "dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md",
+    "npm-shrinkwrap.json"
+  ],
+  "sideEffects": [
+    "./dist/cli.js"
+  ],
+  "engines": {
+    "node": ">=22.12"
+  },
+  "homepage": "https://docs.mancer.xyz/agents/mcp",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/blockhash-xyz/mancer-sdk.git",
+    "directory": "packages/mcp"
+  },
+  "bugs": {
+    "url": "https://github.com/blockhash-xyz/mancer-sdk/issues"
+  },
+  "keywords": [
+    "mancer",
+    "mcp",
+    "model-context-protocol",
+    "mcp-server",
+    "streamable-http",
+    "ai-agents",
+    "claude",
+    "robinhood-chain",
+    "dex-aggregator",
+    "swap",
+    "trading"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsup",
+    "prepack": "npm run build && node ../../scripts/npm/shrinkwrap.mjs",
+    "postpack": "node ../../scripts/npm/shrinkwrap.mjs --remove",
+    "start": "node scripts/run-source.mjs",
+    "serve": "node scripts/run-source.mjs serve",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@blockhash/mancer-sdk": "0.2.0",
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "viem": "2.55.10",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsup": "8.5.1",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

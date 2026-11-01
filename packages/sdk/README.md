@@ -64,7 +64,7 @@ The full guide is at [docs.mancer.xyz/agents/sdk](https://docs.mancer.xyz/agents
 
 ## Source
 
-The source is at [github.com/blockhash-xyz/mancer-sdk](https://github.com/blockhash-xyz/mancer-sdk), with an [example bot](https://github.com/blockhash-xyz/mancer-sdk/tree/main/examples/trading-bot).
+The source is at [github.com/blockhash-xyz/mancer-sdk](https://github.com/blockhash-xyz/mancer-sdk), with the MCP server and an [example bot](https://github.com/blockhash-xyz/mancer-sdk/tree/main/examples/trading-bot).
 
 ## License
 

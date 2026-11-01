@@ -221,7 +221,7 @@ export type Error = {
   /** The `Retry-After` header's seconds, where the answer carries one: every 429 and every 503. */
   retryAfterSeconds?: number
   /** On a 429 `rate-limited`, the bucket that refused. */
-  bucket?: "key" | "session" | "ip" | "ip-ceiling" | "art" | "estimate" | "auth" | "discover" | "discover-ceiling" | "account-write" | "follow-write" | "user-search" | "user-lookup" | "user-follows" | "username-check"
+  bucket?: "key" | "key-account" | "session" | "ip" | "ip-ceiling" | "art" | "estimate" | "build" | "build-ceiling" | "auth" | "discover" | "discover-ceiling" | "account-write" | "follow-write" | "user-search" | "user-lookup" | "user-follows" | "username-check" | "steps"
   /** What the refusal names, by code. */
   detail?: {
     [key: string]: unknown
@@ -230,7 +230,7 @@ export type Error = {
 }
 
 /** Every code an answer may carry. A code keeps its meaning for good; a new rule takes a new code. */
-export type ErrorCode = "account-not-found" | "alerts-max" | "already-in" | "amount-exceeds-tracked" | "app-access-unavailable" | "auth-required" | "auth-unavailable" | "bad-action" | "bad-address" | "bad-addresses" | "bad-amount" | "bad-avatar-source" | "bad-bio" | "bad-body" | "bad-choice" | "bad-collection" | "bad-count" | "bad-cursor" | "bad-details" | "bad-display-name" | "bad-fields" | "bad-filter" | "bad-gateway" | "bad-id" | "bad-image-url" | "bad-json" | "bad-key-name" | "bad-label" | "bad-limit" | "bad-message" | "bad-mode" | "bad-name" | "bad-page" | "bad-platform" | "bad-pool" | "bad-public" | "bad-push-token" | "bad-query" | "bad-read" | "bad-reason" | "bad-recipient" | "bad-request" | "bad-scope" | "bad-scopes" | "bad-show-portfolio" | "bad-signature" | "bad-status" | "bad-symbol" | "bad-targets" | "bad-telegram" | "bad-then" | "bad-timeframe" | "bad-token" | "bad-token-id" | "bad-tokens-per-nft" | "bad-tx-hash" | "bad-username" | "bad-via" | "bad-wallet" | "bad-website" | "bad-x" | "batch-too-large" | "bio-length" | "bio-lines" | "block-self" | "blocking-max" | "book-cancelled" | "book-indexing" | "book-not-armed" | "book-settled" | "books-chain-stale" | "books-deployment-unverified" | "books-index-unavailable" | "books-rate-limited" | "books-sign-log-unavailable" | "books-signer-has-code" | "books-signer-not-current" | "books-signer-stopped" | "books-signer-unavailable" | "books-signing-off" | "books-state-unavailable" | "bucket-full" | "budget-exhausted" | "chain-unavailable" | "confirm-delete" | "conflict" | "contract-not-served" | "deadline-past-unlock" | "deployment-unsupported" | "description-blank" | "description-length" | "description-lines" | "description-link" | "details-too-long" | "display-name-address" | "display-name-blank" | "display-name-length" | "display-name-link" | "display-name-word" | "draft-deployed" | "draft-name" | "draft-not-found" | "draft-symbol" | "events-unavailable" | "factory-not-open" | "feed-stale" | "field-not-for-kind" | "fill-impact-too-high" | "follow-blocked" | "follow-limit" | "follow-self" | "following-max" | "follows-paused" | "forbidden" | "geo-restricted" | "idempotency-in-progress" | "idempotency-key-invalid" | "idempotency-key-reused" | "impact-too-high" | "insufficient-eth" | "insufficient-tokens" | "integrator-fee-above-ceiling" | "integrator-fee-needs-key" | "integrator-fee-not-allowed" | "integrator-fee-unavailable" | "internal-error" | "invalid-accepted-min-out" | "invalid-integrator-fee" | "inventory-empty" | "inventory-short" | "invite-invalid" | "invite-not-found" | "invite-own" | "invite-tries" | "invite-used" | "key-managed-by-mancer" | "key-name-ambiguous" | "key-name-taken" | "key-not-found" | "key-not-owner" | "key-not-signing" | "key-required" | "key-scope" | "key-server-only" | "key-session-only" | "keys-max" | "keys-unavailable" | "launch-state-unavailable" | "legacy-closed" | "limit-under-market" | "link-busy" | "link-choice" | "link-contract-wallet" | "link-expired" | "link-limit" | "link-signature" | "linked-wallet-key-only" | "live-grants-full" | "logo-dimensions" | "logo-empty" | "logo-forbidden" | "logo-not-found" | "logo-not-raster" | "logo-too-large" | "logo-type" | "logo-type-mismatch" | "logo-unavailable" | "lp-share" | "middle-not-swept" | "middle-refused" | "names-required" | "nft-market-exists" | "nft-market-indexing" | "nft-market-paused" | "nft-market-state-unavailable" | "nft-market-unverified" | "nft-markets-unavailable" | "nft-not-found" | "no-image" | "no-nft-market" | "no-picture" | "no-reference" | "no-route" | "no-username" | "nonce-invalid" | "not-a-book" | "not-a-collection" | "not-a-trader" | "not-activated" | "not-an-eoa" | "not-an-nft" | "not-an-nft-market" | "not-book-operator" | "not-eligible" | "not-eligible-yet" | "not-following" | "not-found" | "not-frozen" | "not-in-inventory" | "not-market-maker" | "not-offered" | "not-owner" | "not-raising" | "not-read-yet" | "not-the-creator" | "note-required" | "nothing-to-claim" | "nothing-to-do" | "nothing-to-report" | "order-fills-unavailable" | "order-kind-unavailable" | "order-not-open" | "order-out-of-scope" | "orders-exceed-holding" | "orders-maker-only" | "origin-refused" | "payload-too-large" | "pending-mismatch" | "picture-dimensions" | "picture-empty" | "picture-forbidden" | "picture-frames" | "picture-not-raster" | "picture-too-large" | "picture-type" | "picture-type-mismatch" | "picture-unavailable" | "pool-fee-trap" | "pool-take-too-high" | "price-moved" | "primary-wallet" | "profile-field-held" | "profiles-not-open" | "profiles-unavailable" | "q-required" | "quote-assessment-stale" | "quote-expired" | "quote-invalid" | "quote-required" | "quote-timeout" | "quote-value-discrepancy" | "quotes-paused" | "rate-limited" | "reason-required" | "recipient-not-found" | "refresh-nothing" | "refresh-unavailable" | "refresh-wait" | "report-limit" | "report-not-found" | "report-self" | "reversal-cooldown" | "reverses-live-order" | "round-trip-trap" | "route-leaves-stock" | "route-mismatch" | "route-pool-refused" | "route-touches-book-token" | "router-unavailable" | "salt-required" | "search-busy" | "search-unavailable" | "self-serve-keys-off" | "sell-exceeds-balance" | "sell-exceeds-curve" | "sells-disabled" | "session-required" | "session-revoked" | "signature-mismatch" | "simulation-mismatch" | "simulation-reverted" | "slippage-exceeded" | "stake-unread" | "steps-unavailable" | "stock-not-receivable" | "stocks-ack-required" | "stop-band-out-of-range" | "stop-band-too-narrow" | "stop-needs-cash-side" | "stop-over-market" | "stop-too-deep" | "stop-would-fire" | "store-busy" | "store-unavailable" | "stream-tickets-unavailable" | "target-duplicate" | "target-own-token" | "target-unknown" | "target-unverified" | "targets-locked" | "targets-required" | "terms-refused" | "thesis-blank" | "thesis-held" | "thesis-length" | "thesis-lines" | "thesis-link" | "thesis-not-found" | "tier-not-upgrade" | "timeout" | "token-is-a-book" | "token-refused" | "token-router-refused" | "token-sell-blocked" | "token-sell-gated" | "too-many-streams" | "transaction-not-found" | "transfer-refused" | "tx-taken" | "unavailable" | "unknown-field" | "unknown-leg" | "unknown-order" | "unknown-pool" | "unknown-token" | "unknown-username" | "unprocessable" | "unsupported-media-type" | "upload-limit" | "user-not-found" | "username-cooldown" | "username-format" | "username-held" | "username-in-use" | "username-length" | "username-lookalike" | "username-needs-x-or-stake" | "username-not-in-use" | "username-opened-elsewhere" | "username-prefix" | "username-reserved" | "username-staff-word" | "username-symbol" | "username-taken" | "username-x-handle" | "vault-simulation-failed" | "vault-tracks-16" | "venue-policy-changed" | "venue-policy-unavailable" | "vote-needs-verified" | "votes-rate-limited" | "wallet-already-linked" | "wallet-linked-elsewhere" | "wallet-mismatch" | "wallet-not-linked" | "wallet-required" | "wallets-max" | "website-social" | "weth-spot" | "window-closed" | "window-closing" | "wrong-phase" | "x-device-expired" | "x-device-unknown" | "x-device-used" | "x-link-busy" | "x-link-denied" | "x-link-failed" | "x-not-linked" | "x-refresh-wait" | "x-ticket-not-yours" | "x-ticket-unknown" | "x-unavailable" | "zero-count" | "zero-trade"
+export type ErrorCode = "account-not-found" | "alerts-max" | "already-in" | "amount-exceeds-tracked" | "app-access-unavailable" | "auth-required" | "auth-unavailable" | "bad-action" | "bad-address" | "bad-addresses" | "bad-amount" | "bad-avatar-source" | "bad-bio" | "bad-body" | "bad-choice" | "bad-collection" | "bad-count" | "bad-cursor" | "bad-details" | "bad-display-name" | "bad-fields" | "bad-filter" | "bad-gateway" | "bad-id" | "bad-image-url" | "bad-json" | "bad-key-name" | "bad-label" | "bad-limit" | "bad-message" | "bad-mode" | "bad-name" | "bad-page" | "bad-platform" | "bad-pool" | "bad-public" | "bad-push-token" | "bad-query" | "bad-read" | "bad-reason" | "bad-recipient" | "bad-request" | "bad-scope" | "bad-scopes" | "bad-seq" | "bad-show-portfolio" | "bad-signature" | "bad-status" | "bad-symbol" | "bad-targets" | "bad-telegram" | "bad-then" | "bad-timeframe" | "bad-token" | "bad-token-id" | "bad-tokens-per-nft" | "bad-tx-hash" | "bad-username" | "bad-via" | "bad-wallet" | "bad-website" | "bad-x" | "batch-too-large" | "bio-length" | "bio-lines" | "block-self" | "blocking-max" | "book-cancelled" | "book-indexing" | "book-not-armed" | "book-settled" | "books-chain-stale" | "books-deployment-unverified" | "books-index-unavailable" | "books-rate-limited" | "books-sign-log-unavailable" | "books-signer-has-code" | "books-signer-not-current" | "books-signer-stopped" | "books-signer-unavailable" | "books-signing-off" | "books-state-unavailable" | "bucket-full" | "budget-exhausted" | "chain-unavailable" | "confirm-delete" | "conflict" | "contract-not-served" | "deadline-past-unlock" | "deletion-not-pending" | "deployment-unsupported" | "description-blank" | "description-length" | "description-lines" | "description-link" | "details-too-long" | "display-name-address" | "display-name-blank" | "display-name-length" | "display-name-link" | "display-name-word" | "draft-deployed" | "draft-name" | "draft-not-found" | "draft-symbol" | "events-unavailable" | "factory-not-open" | "feed-stale" | "field-not-for-kind" | "fill-impact-too-high" | "follow-blocked" | "follow-limit" | "follow-self" | "following-max" | "follows-paused" | "forbidden" | "geo-restricted" | "idempotency-in-progress" | "idempotency-key-invalid" | "idempotency-key-reused" | "impact-too-high" | "insufficient-eth" | "insufficient-tokens" | "integrator-fee-above-ceiling" | "integrator-fee-needs-key" | "integrator-fee-not-allowed" | "integrator-fee-unavailable" | "internal-error" | "invalid-accepted-min-out" | "invalid-integrator-fee" | "inventory-empty" | "inventory-short" | "invite-invalid" | "invite-not-found" | "invite-own" | "invite-tries" | "invite-used" | "key-managed-by-mancer" | "key-name-ambiguous" | "key-name-taken" | "key-not-found" | "key-not-owner" | "key-not-signing" | "key-required" | "key-scope" | "key-server-only" | "key-session-only" | "keys-max" | "keys-unavailable" | "launch-state-unavailable" | "legacy-closed" | "limit-under-market" | "link-busy" | "link-choice" | "link-contract-wallet" | "link-expired" | "link-limit" | "link-signature" | "linked-wallet-key-only" | "live-grants-full" | "logo-dimensions" | "logo-empty" | "logo-forbidden" | "logo-not-found" | "logo-not-raster" | "logo-too-large" | "logo-type" | "logo-type-mismatch" | "logo-unavailable" | "lp-share" | "middle-not-swept" | "middle-refused" | "names-required" | "nft-market-exists" | "nft-market-indexing" | "nft-market-paused" | "nft-market-state-unavailable" | "nft-market-unverified" | "nft-markets-unavailable" | "nft-not-found" | "no-image" | "no-nft-market" | "no-picture" | "no-reference" | "no-route" | "no-username" | "nonce-invalid" | "not-a-book" | "not-a-collection" | "not-a-trader" | "not-activated" | "not-an-eoa" | "not-an-nft" | "not-an-nft-market" | "not-book-operator" | "not-eligible" | "not-eligible-yet" | "not-following" | "not-found" | "not-frozen" | "not-in-inventory" | "not-market-maker" | "not-offered" | "not-owner" | "not-raising" | "not-read-yet" | "not-the-creator" | "note-required" | "nothing-to-claim" | "nothing-to-do" | "nothing-to-report" | "order-fills-unavailable" | "order-kind-unavailable" | "order-not-open" | "order-out-of-scope" | "orders-exceed-holding" | "orders-maker-only" | "origin-refused" | "payload-too-large" | "pending-mismatch" | "picture-dimensions" | "picture-empty" | "picture-forbidden" | "picture-frames" | "picture-not-raster" | "picture-too-large" | "picture-type" | "picture-type-mismatch" | "picture-unavailable" | "pool-fee-trap" | "pool-take-too-high" | "price-moved" | "primary-wallet" | "primary-wallet-only" | "profile-field-held" | "profiles-not-open" | "profiles-unavailable" | "q-required" | "quote-assessment-stale" | "quote-expired" | "quote-invalid" | "quote-required" | "quote-timeout" | "quote-value-discrepancy" | "quotes-paused" | "rate-limited" | "reason-required" | "recipient-not-found" | "refresh-nothing" | "refresh-unavailable" | "refresh-wait" | "report-limit" | "report-not-found" | "report-self" | "reversal-cooldown" | "reverses-live-order" | "round-trip-trap" | "route-leaves-stock" | "route-mismatch" | "route-pool-refused" | "route-touches-book-token" | "router-unavailable" | "salt-required" | "search-busy" | "search-unavailable" | "self-serve-keys-off" | "sell-exceeds-balance" | "sell-exceeds-curve" | "sells-disabled" | "session-required" | "session-revoked" | "signature-mismatch" | "simulation-mismatch" | "simulation-reverted" | "slippage-exceeded" | "stake-unread" | "steps-unavailable" | "stock-not-receivable" | "stocks-ack-required" | "stop-band-out-of-range" | "stop-band-too-narrow" | "stop-needs-cash-side" | "stop-over-market" | "stop-too-deep" | "stop-would-fire" | "store-busy" | "store-unavailable" | "stream-tickets-unavailable" | "target-duplicate" | "target-own-token" | "target-unknown" | "target-unverified" | "targets-locked" | "targets-required" | "terms-refused" | "thesis-blank" | "thesis-held" | "thesis-length" | "thesis-lines" | "thesis-link" | "thesis-not-found" | "tier-not-upgrade" | "timeout" | "token-is-a-book" | "token-refused" | "token-router-refused" | "token-sell-blocked" | "token-sell-gated" | "too-many-streams" | "transaction-not-found" | "transfer-refused" | "tx-taken" | "unavailable" | "unknown-field" | "unknown-leg" | "unknown-order" | "unknown-pool" | "unknown-token" | "unknown-username" | "unprocessable" | "unsupported-media-type" | "upload-limit" | "user-not-found" | "username-cooldown" | "username-format" | "username-held" | "username-in-use" | "username-length" | "username-lookalike" | "username-needs-x-or-stake" | "username-not-in-use" | "username-opened-elsewhere" | "username-prefix" | "username-reserved" | "username-staff-word" | "username-symbol" | "username-taken" | "username-x-handle" | "vault-simulation-failed" | "vault-tracks-16" | "venue-policy-changed" | "venue-policy-unavailable" | "vote-needs-verified" | "votes-rate-limited" | "wallet-already-linked" | "wallet-linked-elsewhere" | "wallet-mismatch" | "wallet-not-linked" | "wallet-required" | "wallets-max" | "webhook-busy" | "webhook-event-before-hook" | "webhook-event-not-found" | "webhook-event-not-subscribed" | "webhook-event-pending" | "webhook-events-invalid" | "webhook-not-found" | "webhook-resume-session-only" | "webhook-url-invalid" | "webhook-url-not-public" | "webhook-url-unresolvable" | "webhooks-max" | "webhooks-off" | "webhooks-unavailable" | "website-social" | "weth-spot" | "window-closed" | "window-closing" | "wrong-phase" | "x-device-expired" | "x-device-unknown" | "x-device-used" | "x-link-busy" | "x-link-denied" | "x-link-failed" | "x-not-linked" | "x-refresh-wait" | "x-ticket-not-yours" | "x-ticket-unknown" | "x-unavailable" | "zero-count" | "zero-trade"
 
 /** What a wallet key may ask beyond the public reads: the account's own reads, building trades and orders, the account's records on Mancer, or Books signing for its own wallet. */
 export type KeyScope = "read" | "trade" | "records" | "books"
@@ -362,6 +362,8 @@ export type SessionsRevoked = {
   issuedAt: number
   /** Seven days past `issuedAt`. */
   expiresAt: number
+  /** The webhooks paused with the sessions. Resume each with the fresh session. */
+  pausedWebhooks?: PausedWebhook[]
 }
 
 export type ProfileReportResponse = {
@@ -460,7 +462,7 @@ export type Safety = {
   poolFeeBps?: number
   /** The share of the trade, in bps, that runs through the pool `poolFeeBps` names. Absent where the route does not say, which reads as the whole trade. */
   poolFeeShareBps?: number
-  /** What every pool of the route takes of the whole trade, in bps: each pool's take on the share of the trade that runs through it, summed. Absent where the route does not say. */
+  /** What every pool of the route takes of the whole trade, in bps: each pool's take of what reaches it, on the share of the trade that runs through it. Absent where the route does not say. */
   routeFeeBps?: number
   /** An outside aggregator quoted the same trade within 5% of this quote (on `external=1` requests alone), so a reference shortfall is the reference's. Present (true) only then. */
   outsideAgrees?: boolean
@@ -781,7 +783,7 @@ export type Token = {
   pools24h?: number
   /** Pools with a depth row (the ones with a cash side). */
   pools?: number
-  /** `high` or `low` (a defended price, by the pools behind it), `day`, `last`, or null without a price. */
+  /** `high` or `low` (a defended price, by the pools behind it), `day`, `last`, `pool` (its market pool's price, before any trade), or null without a price. */
   priceConfidence?: string | null
   /** The measured depth behind the price; 0 means it rests on volume alone. */
   priceDepthUsd?: number | null
@@ -2325,7 +2327,7 @@ export type BookSettlementEstimate = {
   circulatingParts: BookCirculatingParts
   /** What a whole token would redeem for. */
   payoutPerTokenWei: BooksUnits | null
-  /** A holding's value did not read. */
+  /** Always false: a Book's value always reads whole. Kept for clients built before it. */
   partial: boolean
   asOf: BooksHead
 }
@@ -2811,7 +2813,7 @@ export type BookValue = {
   afterFeesBps: number | null
   /** The market price over the backing. */
   priceToBackingBps: number | null
-  /** A holding's value did not read. */
+  /** Always false: a Book's value always reads whole. Kept for clients built before it. */
   partial: boolean
   /** A holding is valued at a reference price, not a route, or at a sale priced for another amount and scaled. */
   approx: boolean
@@ -3573,15 +3575,28 @@ export type AccountEventsPage = {
 export type AccountEvent = {
   /** The event's place in the log, a decimal string. Pass it as `since` to read past it. */
   seq: string
-  kind: "order.placed" | "order.filled" | "order.completed" | "order.cancelled" | "order.expired" | "order.reopened" | "order.refused" | "notice.new" | "notice.counted" | "book.next" | "book.pending" | "book.redeemable" | "book.cut-owed"
+  kind: "order.placed" | "order.filled" | "order.completed" | "order.cancelled" | "order.expired" | "order.reopened" | "order.refused" | "notice.new" | "notice.counted" | "book.next" | "book.pending" | "book.redeemable" | "book.cut-owed" | "account.deletion-requested" | "account.deletion-cancelled"
   account: Address
-  /** The account's wallet the event is about: the order's maker, the notice's recipient, or the Book's party. */
+  /** The account's wallet the event is about: the order's maker, the notice's recipient, the Book's party, or the account's own. */
   wallet: Address
-  /** The event's subject: an order's hash, a notice's id, or a Book's token. */
+  /** The event's subject: an order's hash, a notice's id, a Book's token, or the account. */
   key: string
   /** When the fact was written. */
   at: string
-  data: AccountOrderEventData | AccountOrderFillData | AccountNoticeEventData | AccountBookEventData
+  data: AccountOrderEventData | AccountOrderFillData | AccountNoticeEventData | AccountBookEventData | AccountDeletionEventData
+}
+
+/** `account.deletion-requested` and `account.deletion-cancelled`: a linked wallet's request to delete the account. */
+export type AccountDeletionEventData = {
+  requestedBy: Address
+  /** Unix seconds the wallet asked. */
+  requestedAt: number
+  /** Unix seconds the account is erased, had the request stood. */
+  deletesAt: number
+  /** `account.deletion-cancelled` alone: the wallet that cancelled it. */
+  cancelledBy?: Address
+  /** `account.deletion-cancelled` alone: the primary wallet, the wallet that asked, or that wallet's unlink. */
+  reason?: "primary" | "requester" | "unlinked"
 }
 
 /** `order.placed`, `order.completed`, `order.cancelled`, `order.expired`, `order.reopened` and `order.refused`. */
@@ -3629,8 +3644,8 @@ export type AccountOrderFillData = {
 export type AccountNoticeEventData = {
   /** The notice's id in the account's inbox. */
   id: string
-  kind: "follow" | "trade"
-  /** Who followed, or whose trades these are. */
+  kind: "follow" | "trade" | "webhook" | "account-deletion"
+  /** Who followed, or whose trades these are; for a webhook notice, the account's own wallet; for a deletion's, the wallet that asked or cancelled. */
   actor: Address
   /** Unix seconds: the follow's time, or the newest trade's block time. */
   at: number
@@ -3642,6 +3657,10 @@ export type AccountNoticeEventData = {
   trade?: {
     [key: string]: unknown
   } | null
+  /** A webhook notice's hook, in place of `trade`: a hook made or paused. */
+  webhook?: WebhookNotice
+  /** An account deletion's notice, in place of `trade`: the request made or cancelled. */
+  deletion?: DeletionNotice
 }
 
 /** `book.next`, `book.pending`, `book.redeemable` and `book.cut-owed`: the Book, its phase at the block it was read at, and the kind's own fields. */
@@ -3692,6 +3711,108 @@ export type StreamTicket = {
   socket: string
   /** The account's newest event's `seq` now. */
   head: string
+}
+
+/** One of the account's webhooks. No answer carries its secret after the one that made it. */
+export type Webhook = {
+  id: string
+  url: string
+  /** The kinds it delivers: kinds of the log, families such as `order.*`, or `*`. */
+  events: string[]
+  active: boolean
+  /** Why and when it was paused. `revoked`, `key`, `unlinked` and `merged`: the credential it stood on ended, or a merge brought it in, and a session alone resumes it. */
+  paused: {
+    reason: "owner" | "failing" | "revoked" | "key" | "unlinked" | "merged"
+    at: string
+  } | null
+  /** The last event of the account's log it delivered or passed over. */
+  lastSeq: string
+  lastDeliveredAt: string | null
+  /** The run of failures it is in, where it is in one. */
+  failing: {
+    since: string
+    /** The tries of the event it waits on. */
+    attempts: number
+    /** The next try of the event it waits on, or null while the hook is paused. */
+    nextAttemptAt: string | null
+    /** The receiver's last HTTP status, or null where none came. */
+    lastStatus: number | null
+    /** Why the last try failed, with an excerpt of the answer's body. */
+    lastError: string | null
+  } | null
+  /** Until when the secret before its last rotation still signs. */
+  previousSecretUntil: string | null
+  createdBy: WebhookCredential
+  createdAt: string
+  /** Mancer holds its deliveries for a fault of its own, never counted against the hook. Its events wait, and go out in order once mended. */
+  held: boolean
+  /** Why it is held: its secret, or the secret before its rotation, cannot be opened, or the server signs nothing. Null while it is not held. */
+  heldReason: "secret" | "previous-secret" | "no-server-key" | null
+}
+
+/** The credential a hook stands on: the one that made it, or the session that resumed it after that one ended. */
+export type WebhookCredential = {
+  /** The credential's wallet. */
+  wallet: string | null
+  /** A key's name, or null for a session. */
+  key: string | null
+  /** When the session was issued, or null for a key. */
+  sessionIssuedAt: string | null
+}
+
+/** A webhook paused because a credential ended: its id and its URL's host, never its path. */
+export type PausedWebhook = {
+  id: string
+  host: string
+}
+
+export type WebhookCreated = {
+  webhook: Webhook
+  /** `whsec_…`, the hook's signing secret. Keep it on your server; no other answer carries it. */
+  secret: string | null
+  /** True on an `Idempotency-Key` replay, which never carries the secret. */
+  secretWithheld?: boolean
+}
+
+export type WebhookList = {
+  account: Address
+  webhooks: Webhook[]
+  max: 5
+  /** Every kind of the account's log. */
+  kinds: string[]
+  /** False while Mancer has deliveries switched off; they resume where they stopped. */
+  on: boolean
+}
+
+export type WebhookTry = {
+  webhook: string
+  /** The receiver answered a 2xx within ten seconds. */
+  delivered: boolean
+  /** The receiver's HTTP status, or null where none came. */
+  status: number | null
+  /** Why it failed: the status with an excerpt of the body, a refused redirect, a host that is not public, or no answer. */
+  error: string | null
+  ms: number
+}
+
+export type WebhookDelivery = {
+  /** The event's place in the account's log. */
+  seq: string
+  kind: string
+  /** `failed`: the hook was paused on it after a day of failures. `skipped`: it waited on a retry and the hook stopped taking its kind. */
+  state: "delivered" | "retrying" | "failed" | "skipped"
+  /** Every try, redeliveries among them. */
+  attempts: number
+  /** The last try's HTTP status. */
+  status: number | null
+  /** The last failure's reason, kept after a later try lands. */
+  lastError: string | null
+  firstAttemptAt: string
+  lastAttemptAt: string
+  deliveredAt: string | null
+  /** The next try of a delivery that waits on a retry, while its hook is active; null otherwise. */
+  nextAttemptAt: string | null
+  redeliveries: number
 }
 
 /** A token's votes and how many theses stand on it. */
@@ -3803,6 +3924,13 @@ export type WalletLinkChoices = {
     required: true
     because: ("follows" | "blocks" | "username" | "x" | "wallets")[]
   }
+  webhooks?: MergedWebhooks
+}
+
+/** The joining account's webhooks: those that come in paused, for a session to resume, and those past the five, which go with it. */
+export type MergedWebhooks = {
+  paused: PausedWebhook[]
+  left: PausedWebhook[]
 }
 
 export type WalletLinkResponse = {
@@ -3836,6 +3964,8 @@ export type WalletLinkResponse = {
       alerts: number
       blocks: number
     } | null
+    /** A merge's webhooks; null for a plain link. */
+    webhooks?: MergedWebhooks | null
   }
 }
 
@@ -4031,6 +4161,18 @@ export type OwnerProfile = {
   opening: "everyone" | "beta" | "staked" | "stake" | "unread" | "closed"
   /** Whether a username claim is open, and by which, or what it needs. See `PUT /v1/me/username`. */
   usernameClaim: "everyone" | "x" | "staked" | "needs-x-or-stake" | "opened-elsewhere" | "unread"
+  /** A linked wallet's request to delete the account, while one stands; null otherwise. */
+  deletion?: AccountDeletionPending | null
+}
+
+/** A linked wallet's request to delete the account. The account is erased at `deletesAt` unless the primary wallet cancels it, the wallet that asked cancels it, or that wallet is unlinked first. */
+export type AccountDeletionPending = {
+  /** The linked wallet that asked. */
+  requestedBy: Address
+  /** Unix seconds it asked. On the request's own answers. */
+  requestedAt?: number
+  /** Unix seconds the account is erased: seven days after the request. */
+  deletesAt: number
 }
 
 /** The account's own view, and what the refresh changed. */
@@ -4085,6 +4227,10 @@ export type AccountWalletsResponse = {
   unlinked?: Address
   /** An unlink: the session's own wallet was the one let go, so this session acts for nothing more. */
   sessionEnded?: boolean
+  /** An unlink: the webhooks the wallet's sessions and keys made, paused. */
+  pausedWebhooks?: PausedWebhook[]
+  /** An unlink: the wallet's request to delete the account ended with it. */
+  deletionCancelled?: boolean
 }
 
 export type XLinkStart = {
@@ -4138,11 +4284,11 @@ export type FeedPage = {
   nextBefore: string | null
 }
 
-/** One notification: a wallet followed the account (`follow`), or a wallet with trade alerts on traded (`trade`). */
+/** One notification: a follow (`follow`), a trade alert (`trade`), a webhook made or paused (`webhook`), or a linked wallet's request to delete the account made or cancelled (`account-deletion`). */
 export type Notice = {
   /** The notice's id, a decimal string: higher is newer. */
   id: string
-  kind: "follow" | "trade"
+  kind: "follow" | "trade" | "webhook" | "account-deletion"
   /** Unix seconds: the follow's time, or the newest trade's block time. */
   at: number
   /** Who followed, or whose trades these are. */
@@ -4152,6 +4298,36 @@ export type Notice = {
   trades?: number
   /** A trade notice's newest trade, as the wallet's own trades list it. Absent on a follow. */
   trade?: WalletTrade
+  /** A webhook notice's hook. Its actor is the account's own wallet. */
+  webhook?: WebhookNotice
+  /** An account deletion's notice: the request. Its actor is the wallet that asked or cancelled. */
+  deletion?: DeletionNotice
+}
+
+export type DeletionNotice = {
+  state: "requested" | "cancelled"
+  /** The linked wallet that asked. */
+  requestedBy: Address
+  /** Unix seconds the account goes, had the request stood. */
+  deletesAt: number
+  /** A cancel's wallet. */
+  cancelledBy: Address | null
+  /** A cancel's cause: the primary wallet, the wallet that asked, or that wallet's unlink. */
+  reason: "primary" | "requester" | "unlinked" | null
+}
+
+export type WebhookNotice = {
+  /** The hook's id. */
+  id: string
+  /** The host of the hook's URL, never its path. */
+  host: string
+  /** `created`: the hook was made. `failing`: it was paused after a day of failed deliveries. */
+  reason: "failing" | "created"
+  lastError: string | null
+  /** The event it was paused on, which it sends first once resumed. */
+  seq: string | null
+  /** A made hook's credential. */
+  by?: WebhookCredential
 }
 
 export type NoticesPage = {
@@ -4909,6 +5085,18 @@ export interface Operations {
     body: never
     response: FollowState
   }
+  /** Cancel a request to delete the account */
+  cancelAccountDeletion: {
+    method: "DELETE"
+    path: "/v1/me/account/deletion"
+    pathParams: never
+    query: never
+    body: never
+    response: {
+      cancelled: true
+      deletion: AccountDeletionPending
+    }
+  }
   /** Cancel orders by signature */
   cancelOrders: {
     method: "POST"
@@ -4939,7 +5127,9 @@ export interface Operations {
       scopes?: KeyScope[]
       active?: boolean
     }
-    response: ApiKey
+    response: (ApiKey & {
+      pausedWebhooks: PausedWebhook[]
+    })
   }
   /** Check the account's stake again */
   checkAppAccess: {
@@ -5034,6 +5224,20 @@ export interface Operations {
       expiresAt: number
     }
   }
+  /** Create a webhook */
+  createWebhook: {
+    method: "POST"
+    path: "/v1/me/webhooks"
+    pathParams: never
+    query: never
+    body: {
+      /** An https URL on port 443 with no credentials or fragment, whose host is a public name that resolves to public addresses alone, within two seconds. */
+      url: string
+      /** The kinds to deliver: a kind of the log (`order.filled`), a family (`order.*`, `notice.*`, `book.*`), or `*` for every kind, later ones included. */
+      events: string[]
+    }
+    response: WebhookCreated
+  }
   /** Delete the account */
   deleteAccount: {
     method: "DELETE"
@@ -5046,6 +5250,9 @@ export interface Operations {
     response: {
       /** False where there was no account to erase. */
       deleted: boolean
+    } | {
+      deleted: false
+      deletion: AccountDeletionPending
     }
   }
   /** Delete an API key */
@@ -5059,6 +5266,8 @@ export interface Operations {
       deleted: true
       name: string
       id: string
+      /** The webhooks the key made, paused. */
+      pausedWebhooks: PausedWebhook[]
     }
   }
   /** Delete a saved Book */
@@ -5136,6 +5345,21 @@ export interface Operations {
     query: never
     body: never
     response: BookVoteResponse
+  }
+  /** Delete a webhook */
+  deleteWebhook: {
+    method: "DELETE"
+    path: "/v1/me/webhooks/{id}"
+    pathParams: {
+      /** The hook's id. */
+      id: string
+    }
+    query: never
+    body: never
+    response: {
+      deleted: true
+      id: string
+    }
   }
   /** Browse tokens */
   discoverTokens: {
@@ -5249,6 +5473,8 @@ export interface Operations {
       }[] | null
       createdAt?: number | null
       books?: boolean
+      /** A linked wallet's request to delete the account, while one stands; null otherwise. */
+      deletion?: AccountDeletionPending | null
       [key: string]: unknown
     }
   }
@@ -5807,6 +6033,10 @@ export interface Operations {
     query: never
     body: {
       wallet?: Address
+      /** The signed order, every field as signed: needed where the order's scope does not reach the caller (no session or key of the maker's). */
+      order?: {
+        [key: string]: unknown
+      }
     }
     response: ReadySteps
   }
@@ -7147,6 +7377,33 @@ export interface Operations {
     body: never
     response: FollowListResponse
   }
+  /** List a webhook's deliveries */
+  listWebhookDeliveries: {
+    method: "GET"
+    path: "/v1/me/webhooks/{id}/deliveries"
+    pathParams: {
+      /** The hook's id. */
+      id: string
+    }
+    query: never
+    body: never
+    response: {
+      webhook: string
+      /** Mancer holds the hook's deliveries now, as `GET /v1/me/webhooks` says. */
+      held: boolean
+      heldReason: "secret" | "previous-secret" | "no-server-key" | null
+      deliveries: WebhookDelivery[]
+    }
+  }
+  /** List the account's webhooks */
+  listWebhooks: {
+    method: "GET"
+    path: "/v1/me/webhooks"
+    pathParams: never
+    query: never
+    body: never
+    response: WebhookList
+  }
   /** Look up wallets' identities */
   lookupUsers: {
     method: "GET"
@@ -7506,6 +7763,22 @@ export interface Operations {
       tokens: Token[]
     }
   }
+  /** Redeliver an event */
+  retryWebhookDelivery: {
+    method: "POST"
+    path: "/v1/me/webhooks/{id}/deliveries/{seq}/retry"
+    pathParams: {
+      /** The hook's id. */
+      id: string
+      /** The event's place in the account's log. */
+      seq: string
+    }
+    query: never
+    body: never
+    response: (WebhookTry & {
+      delivery?: WebhookDelivery | null
+    })
+  }
   /** End every session */
   revokeSessions: {
     method: "POST"
@@ -7513,9 +7786,31 @@ export interface Operations {
     pathParams: never
     query: never
     body: {
+      /** `account` takes a session of the account's primary wallet. */
       scope?: "account" | "wallet"
     }
     response: SessionsRevoked
+  }
+  /** Rotate a webhook's secret */
+  rotateWebhookSecret: {
+    method: "POST"
+    path: "/v1/me/webhooks/{id}/rotate"
+    pathParams: {
+      /** The hook's id. */
+      id: string
+    }
+    query: never
+    body: {
+      /** How long the old secret still signs. 0 ends it at once. */
+      keepPreviousSeconds?: number
+    }
+    response: {
+      webhook: Webhook
+      /** The new secret. Keep it on your server; no other answer carries it. */
+      secret: string
+      /** Until when the old secret still signs, or null. */
+      previousSecretUntil: string | null
+    }
   }
   /** Search tokens */
   searchTokens: {
@@ -7691,6 +7986,18 @@ export interface Operations {
       existing: false
     }
   }
+  /** Send a test delivery */
+  testWebhook: {
+    method: "POST"
+    path: "/v1/me/webhooks/{id}/test"
+    pathParams: {
+      /** The hook's id. */
+      id: string
+    }
+    query: never
+    body: never
+    response: WebhookTry
+  }
   /** Turn off a wallet's trade alerts */
   turnOffTradeAlerts: {
     method: "DELETE"
@@ -7775,6 +8082,24 @@ export interface Operations {
     }
     response: BookDraftResponse
   }
+  /** Change or pause a webhook */
+  updateWebhook: {
+    method: "PATCH"
+    path: "/v1/me/webhooks/{id}"
+    pathParams: {
+      /** The hook's id. */
+      id: string
+    }
+    query: never
+    body: {
+      /** The kinds to deliver, as at the hook's creation. Dropping the kind of the event the hook waits on passes that event over at once. */
+      events?: string[]
+      active?: boolean
+    }
+    response: {
+      webhook: Webhook
+    }
+  }
   /** Sign in with a wallet */
   verifySignIn: {
     method: "POST"
@@ -7802,7 +8127,8 @@ export type OperationId = keyof Operations
 /** Every operation's method, path and credential at run time: `none` (the route reads none), `optional` or `required`. */
 export const OPERATIONS = {
   blockWallet: { method: "PUT", path: "/v1/me/blocks/{id}", auth: "required" },
-  cancelOrders: { method: "POST", path: "/v1/orders/cancellations", auth: "required" },
+  cancelAccountDeletion: { method: "DELETE", path: "/v1/me/account/deletion", auth: "required" },
+  cancelOrders: { method: "POST", path: "/v1/orders/cancellations", auth: "optional" },
   changeApiKey: { method: "PATCH", path: "/v1/me/api-keys/{name}", auth: "required" },
   checkAppAccess: { method: "POST", path: "/v1/me/app-access/check", auth: "required" },
   checkUsername: { method: "GET", path: "/v1/usernames/{name}", auth: "required" },
@@ -7811,6 +8137,7 @@ export const OPERATIONS = {
   countUnreadNotifications: { method: "GET", path: "/v1/me/notifications/unread", auth: "required" },
   createBookDraft: { method: "POST", path: "/v1/books/drafts", auth: "required" },
   createWalletLinkMessage: { method: "POST", path: "/v1/me/wallets/link/nonce", auth: "required" },
+  createWebhook: { method: "POST", path: "/v1/me/webhooks", auth: "required" },
   deleteAccount: { method: "DELETE", path: "/v1/me/account", auth: "required" },
   deleteApiKey: { method: "DELETE", path: "/v1/me/api-keys/{name}", auth: "required" },
   deleteBookDraft: { method: "DELETE", path: "/v1/books/drafts/{id}", auth: "required" },
@@ -7820,6 +8147,7 @@ export const OPERATIONS = {
   deleteOwnBanner: { method: "DELETE", path: "/v1/me/profile/banner", auth: "required" },
   deleteOwnProfile: { method: "DELETE", path: "/v1/me/profile", auth: "required" },
   deleteTokenVote: { method: "DELETE", path: "/v1/tokens/{address}/vote", auth: "required" },
+  deleteWebhook: { method: "DELETE", path: "/v1/me/webhooks/{id}", auth: "required" },
   discoverTokens: { method: "GET", path: "/v1/tokens/discover", auth: "none" },
   editAccountWallet: { method: "PATCH", path: "/v1/me/wallets/{address}", auth: "required" },
   editOwnProfile: { method: "PATCH", path: "/v1/me/profile", auth: "required" },
@@ -7843,7 +8171,7 @@ export const OPERATIONS = {
   getBooksActivity: { method: "GET", path: "/v1/books/activity", auth: "optional" },
   getBooksDeployments: { method: "GET", path: "/v1/books/deployments", auth: "optional" },
   getBooksStats: { method: "GET", path: "/v1/books/stats", auth: "optional" },
-  getBookSteps: { method: "POST", path: "/v1/books/{token}/steps", auth: "required" },
+  getBookSteps: { method: "POST", path: "/v1/books/{token}/steps", auth: "optional" },
   getBooksTraders: { method: "GET", path: "/v1/books/traders", auth: "optional" },
   getBookTraderHistory: { method: "GET", path: "/v1/books/traders/{address}/history", auth: "optional" },
   getBookTraderRecord: { method: "GET", path: "/v1/books/traders/{address}", auth: "optional" },
@@ -7863,10 +8191,10 @@ export const OPERATIONS = {
   getNftCollectionImage: { method: "GET", path: "/v1/nft-collections/{address}/image", auth: "none" },
   getNftImage: { method: "GET", path: "/v1/nfts/{collection}/{tokenId}/image", auth: "none" },
   getOrder: { method: "GET", path: "/v1/orders/{hash}", auth: "required" },
-  getOrderCancelSteps: { method: "POST", path: "/v1/orders/{hash}/cancel-steps", auth: "required" },
+  getOrderCancelSteps: { method: "POST", path: "/v1/orders/{hash}/cancel-steps", auth: "optional" },
   getOrderFee: { method: "GET", path: "/v1/order-fee", auth: "none" },
-  getOrdersCancelAllSteps: { method: "POST", path: "/v1/orders/cancel-all-steps", auth: "required" },
-  getOrderSetup: { method: "GET", path: "/v1/orders/setup", auth: "required" },
+  getOrdersCancelAllSteps: { method: "POST", path: "/v1/orders/cancel-all-steps", auth: "optional" },
+  getOrderSetup: { method: "GET", path: "/v1/orders/setup", auth: "optional" },
   getOwnProfile: { method: "GET", path: "/v1/me/profile", auth: "required" },
   getPoolCandles: { method: "GET", path: "/v1/pools/{pool}/candles", auth: "none" },
   getPoolDepth: { method: "GET", path: "/v1/pools/{uid}/depth", auth: "none" },
@@ -7890,7 +8218,7 @@ export const OPERATIONS = {
   getTokenVotes: { method: "GET", path: "/v1/tokens/{address}/votes", auth: "none" },
   getTokenWindows: { method: "GET", path: "/v1/tokens/{address}/windows", auth: "none" },
   getTransaction: { method: "GET", path: "/v1/transactions/{hash}", auth: "none" },
-  getTransferSteps: { method: "POST", path: "/v1/transfers/steps", auth: "required" },
+  getTransferSteps: { method: "POST", path: "/v1/transfers/steps", auth: "optional" },
   getUser: { method: "GET", path: "/v1/users/{id}", auth: "optional" },
   getUserAvatar: { method: "GET", path: "/v1/users/{address}/avatar", auth: "none" },
   getUserBanner: { method: "GET", path: "/v1/users/{address}/banner", auth: "none" },
@@ -7920,6 +8248,8 @@ export const OPERATIONS = {
   listTokenTheses: { method: "GET", path: "/v1/tokens/{address}/theses", auth: "optional" },
   listUserFollowers: { method: "GET", path: "/v1/users/{id}/followers", auth: "optional" },
   listUserFollowing: { method: "GET", path: "/v1/users/{id}/following", auth: "optional" },
+  listWebhookDeliveries: { method: "GET", path: "/v1/me/webhooks/{id}/deliveries", auth: "required" },
+  listWebhooks: { method: "GET", path: "/v1/me/webhooks", auth: "required" },
   lookupUsers: { method: "GET", path: "/v1/users/lookup", auth: "none" },
   markNotificationsRead: { method: "POST", path: "/v1/me/notifications/read", auth: "required" },
   mintApiKey: { method: "POST", path: "/v1/me/api-keys", auth: "required" },
@@ -7944,7 +8274,9 @@ export const OPERATIONS = {
   reportProfile: { method: "POST", path: "/v1/users/{id}/report", auth: "required" },
   reportTokenThesis: { method: "POST", path: "/v1/tokens/{address}/theses/{voter}/report", auth: "required" },
   resolveTokens: { method: "POST", path: "/v1/tokens/resolve", auth: "none" },
+  retryWebhookDelivery: { method: "POST", path: "/v1/me/webhooks/{id}/deliveries/{seq}/retry", auth: "required" },
   revokeSessions: { method: "POST", path: "/v1/me/sessions/revoke", auth: "required" },
+  rotateWebhookSecret: { method: "POST", path: "/v1/me/webhooks/{id}/rotate", auth: "required" },
   searchTokens: { method: "GET", path: "/v1/tokens", auth: "none" },
   searchTokenSetups: { method: "GET", path: "/v1/tokens/setups", auth: "none" },
   searchUsers: { method: "GET", path: "/v1/users", auth: "none" },
@@ -7952,7 +8284,8 @@ export const OPERATIONS = {
   signBookOrderGrant: { method: "POST", path: "/v1/books/{token}/order-grant", auth: "required" },
   signBookVaultQuote: { method: "POST", path: "/v1/books/{token}/vault-quote", auth: "required" },
   startXLink: { method: "POST", path: "/auth/x/start", auth: "required" },
-  submitOrder: { method: "POST", path: "/v1/orders", auth: "required" },
+  submitOrder: { method: "POST", path: "/v1/orders", auth: "optional" },
+  testWebhook: { method: "POST", path: "/v1/me/webhooks/{id}/test", auth: "required" },
   turnOffTradeAlerts: { method: "DELETE", path: "/v1/me/following/{id}/alerts", auth: "required" },
   turnOnTradeAlerts: { method: "PUT", path: "/v1/me/following/{id}/alerts", auth: "required" },
   unblockWallet: { method: "DELETE", path: "/v1/me/blocks/{id}", auth: "required" },
@@ -7960,5 +8293,6 @@ export const OPERATIONS = {
   unlinkAccountWallet: { method: "DELETE", path: "/v1/me/wallets/{address}", auth: "required" },
   unlinkX: { method: "DELETE", path: "/auth/x", auth: "required" },
   updateBookDraft: { method: "PATCH", path: "/v1/books/drafts/{id}", auth: "required" },
+  updateWebhook: { method: "PATCH", path: "/v1/me/webhooks/{id}", auth: "required" },
   verifySignIn: { method: "POST", path: "/auth/verify", auth: "none" },
 } as const satisfies Record<OperationId, { method: string; path: string; auth: 'none' | 'optional' | 'required' }>

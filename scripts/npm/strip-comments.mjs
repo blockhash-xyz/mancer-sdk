@@ -1,13 +1,29 @@
-// Takes every comment out of a built JavaScript file (or a TypeScript one), for the package Mancer publishes to npm (packages/sdk,
-// through its tsup.config.ts). Its source is this monorepo's, written for its own readers; what a package
+// Takes every comment out of a built JavaScript file (or a TypeScript one), for the packages Mancer publishes to npm (packages/sdk and
+// packages/mcp, through their tsup.config.ts). Their source is this monorepo's, written for its own readers; what a package
 // ships is read by anyone. A comment that tells a bundler something is kept: `/* @__PURE__ */` and `/* #__PURE__ */`
-// (what lets a consumer's bundler drop an unused `new Set(...)`), `/* @__NO_SIDE_EFFECTS__ */`, and a file's `#!` line.
+// (what lets a consumer's bundler drop an unused `new Set(...)`), `/* @__NO_SIDE_EFFECTS__ */`, and a file's `#!` line. A
+// TypeScript compiler directive keeps its directive and loses any words after it (`// @ts-expect-error`, `/// <reference
+// types="node" />`).
 //
 // The comments are found by TypeScript's parser, never by a pattern: a regular expression or a string can hold `//` or
 // `/*`. Every comment is trivia before some token, so walking every token of the tree finds each one once.
 import ts from 'typescript'
 
-const KEPT = /^\/\*\s*[@#]__(PURE|NO_SIDE_EFFECTS)__\s*\*\/$|^\/\/\s*@ts-|^\/\/\/\s*<reference /
+const ANNOTATION = /^\/\*\s*[@#]__(PURE|NO_SIDE_EFFECTS)__\s*\*\/$/
+// A compiler directive is kept as its directive alone: the free text a writer put after it is a comment like any other.
+const TS_DIRECTIVE = /^\/\/\s*(@ts-[a-z-]+)\b/
+const REFERENCE = /^\/\/\/\s*(<reference\s+[^>]*?\/>)/
+/** The comment as kept (the directive alone), or null where it goes. */
+function keptForm(text) {
+  if (ANNOTATION.test(text)) return text
+  const directive = TS_DIRECTIVE.exec(text)
+  if (directive) return `// ${directive[1]}`
+  const ref = REFERENCE.exec(text)
+  if (ref) return `/// ${ref[1]}`
+  return null
+}
+/** A comment left in stripped code: an annotation, or a directive with nothing after it. */
+const KEPT = (text) => keptForm(text) === text
 
 /** TypeScript source keeps its compiler directives (`// @ts-expect-error`, `/// <reference …>`) too. */
 const kindOf = (fileName) => (/\.[cm]?tsx?$/.test(fileName) ? ts.ScriptKind.TS : ts.ScriptKind.JS)
@@ -37,7 +53,7 @@ function assertStripped(code, fileName) {
   const { file, ranges } = commentRanges(body, fileName)
   const errors = file.parseDiagnostics ?? []
   if (errors.length) throw new Error(`${fileName}: the stripped code does not parse: ${ts.flattenDiagnosticMessageText(errors[0].messageText, '\n')}`)
-  const left = ranges.map(([s, e]) => body.slice(s, e)).filter((t) => !KEPT.test(t))
+  const left = ranges.map(([s, e]) => body.slice(s, e)).filter((t) => !KEPT(t))
   if (left.length) throw new Error(`${fileName}: ${left.length} comments left, the first ${JSON.stringify(left[0].slice(0, 80))}`)
 }
 
@@ -50,8 +66,14 @@ export function stripComments(code, fileName = 'chunk.js') {
   for (const [start, end] of commentRanges(body, fileName).ranges) {
     if (start < last) continue
     const text = body.slice(start, end)
-    if (KEPT.test(text)) continue
+    const kept = keptForm(text)
+    if (kept === text) continue
     out += body.slice(last, start)
+    if (kept !== null) {
+      out += kept
+      last = end
+      continue
+    }
     // a comment between two tokens on one line keeps them apart
     const before = body[start - 1] ?? '\n'
     const after = body[end] ?? '\n'

@@ -5,11 +5,17 @@ import { floorKind, type FloorRule } from './floor'
 import {
   BOOK_ABIS,
   BOOK_DEPLOYMENTS,
+  BOOK_EIP712_NAME,
+  BOOK_EIP712_VERSION,
   BOOK_SHARED,
+  hashBookQuote,
   abortCall,
   armCall,
   bondCall,
   bookAbisFor,
+  bookCallData,
+  buyCall,
+  buyEthCall,
   bookTradeIntentFromQuote,
   cancelOrderCall,
   claimCreatorCutCall,
@@ -18,12 +24,15 @@ import {
   executeTradeCall,
   graduateCall,
   harvestCall,
+  liquidateCall,
+  liquidationCallMismatch,
   parseBookQuote,
   proposeTradeCall,
   readRouterLegs,
   redeemCall,
   revokeAllowanceCall,
   revokeOrdersCall,
+  sellCall,
   stakeCall,
   sweepLeftoverCall,
   sweepUnownedCall,
@@ -31,10 +40,12 @@ import {
   syncTrackedCall,
   unstakeCall,
   vaultRouteMismatch,
+  type BookCall,
   type BookDeployment,
   type BookQuote,
   type BookTradeIntent,
 } from './shared'
+import type { BookLiquidationQuotesResponse, BookVaultQuoteRequest, BookVaultQuoteResponse } from './generated/openapi'
 
 /**
  * A Book as the caller's own node reads it, and each of its acts rebuilt from the kit's builders
@@ -59,6 +70,10 @@ export interface BookActArgs extends FloorRule {
   spender?: Address
   orderHash?: Hex
   tokens?: Address[]
+  /** `confirmTrade` and `executeTrade`: the pending trade the caller read and agreed to. The act is refused where the
+   * vault's `pending()` on the caller's node is another trade (its salt, tokens, amount or floor), so a trade proposed in
+   * between is never the one confirmed. */
+  expectPending?: { salt: bigint; tokenIn: Address; tokenOut: Address; amountIn: bigint; minOut: bigint }
 }
 
 /** A Book as its factory says it is. */
@@ -107,6 +122,149 @@ function intentOfPending(p: readonly unknown[]): BookTradeIntent {
   return { adapter, tokenIn, tokenOut, amountIn, minOut, route, nonce, deadline, quoteSalt, mancerSig }
 }
 
+/** The trade a Book's vault holds pending (its `pending()`, read on the caller's node), or null where it holds none: what
+ * a co-trader's confirmation and an execution sign, read before either is asked for. */
+export async function readVaultPending(chain: Pick<PublicClient, 'readContract'>, book: ChainBook): Promise<BookTradeIntent | null> {
+  const abi = (BOOK_ABIS.books as unknown as Record<string, Abi>).account!
+  const pending = intentOfPending((await chain.readContract({ address: book.vault, abi, functionName: 'pending', args: [] } as never)) as readonly unknown[])
+  return same(pending.adapter, zeroAddress) ? null : pending
+}
+
+/**
+ * A vault quote's digest: its EIP-712 `MancerQuote` hash under the vault's own domain (the kit's name and version, the
+ * chain, the vault), as the vault keys `quoteUsed`. Two quotes with one salt and another deadline, floor or route are two
+ * quotes the vault takes; a proposal and the pending trade it leaves (the same quote's fields, `quoteSalt` its salt) are
+ * one.
+ */
+export function bookQuoteDigest(vault: Address, q: { adapter: Address; tokenIn: Address; tokenOut: Address; amountIn: bigint; minOut: bigint; route: Hex; deadline: bigint; salt: bigint }, chainId = 4663): Hex {
+  return hashBookQuote({ name: BOOK_EIP712_NAME, version: BOOK_EIP712_VERSION, chainId, verifyingContract: getAddress(vault) }, {
+    adapter: getAddress(q.adapter), tokenIn: getAddress(q.tokenIn), tokenOut: getAddress(q.tokenOut), amountIn: q.amountIn, minOut: q.minOut, route: q.route, deadline: q.deadline, salt: q.salt,
+  })
+}
+
+/** A Book's pot as its settler holds it: `navTotalOf`, `settleOf`'s close fee, traders' cut and holder pot, and
+ * `lpPotOf` (the holder pot carries the LP pot inside it). */
+export interface BookPot {
+  navTotal: bigint
+  closeFee: bigint
+  creatorCutTotal: bigint
+  holderPot: bigint
+  lpPot: bigint
+}
+
+const BPS = 10_000n
+/** TraderBookSettler's rules (876e24d): a close fee of 2% of the closing value, then the traders' 20% of the profit. */
+const CLOSE_FEE_BPS = 200n
+const TRADERS_PROFIT_BPS = 2_000n
+
+/**
+ * TraderBookSettler's `_addToPot` for WETH a sweep adds (876e24d): the close fee on the cumulative NAV first (its increase
+ * capped at what came in), then the traders' share of the profit over the cost basis (its increase capped at what the fee
+ * left), then the holders the rest. The contracts kit's `addToBookPot` is the same arithmetic; a test in Mancer's
+ * repository holds the two equal to the wei.
+ */
+export function potAfterSweep(pot: BookPot, costBasis: bigint, weth: bigint, traders: number): BookPot {
+  const navTotal = pot.navTotal + weth
+  const feeTotal = (navTotal * CLOSE_FEE_BPS) / BPS
+  let feeDelta = feeTotal > pot.closeFee ? feeTotal - pot.closeFee : 0n
+  if (feeDelta > weth) feeDelta = weth
+  const closeFee = pot.closeFee + feeDelta
+  const net = navTotal - closeFee
+  const profit = net > costBasis ? net - costBasis : 0n
+  const cutTotal = (profit * TRADERS_PROFIT_BPS) / BPS
+  let cutDelta = cutTotal > pot.creatorCutTotal ? cutTotal - pot.creatorCutTotal : 0n
+  if (cutDelta > weth - feeDelta) cutDelta = weth - feeDelta
+  if (traders <= 0) cutDelta = 0n
+  return { navTotal, closeFee, creatorCutTotal: pot.creatorCutTotal + cutDelta, holderPot: pot.holderPot + (weth - feeDelta - cutDelta), lpPot: pot.lpPot }
+}
+
+/** What the settler's `redeem(amount)` pays (876e24d), or null where it refuses: nothing named, nothing circulating, or
+ * more than circulates. The last redeemer takes the exact remainder; every other payout rounds down. */
+export function redeemPayout(s: { holderPot: bigint; circulating: bigint }, amount: bigint): bigint | null {
+  if (amount === 0n || s.circulating === 0n || amount > s.circulating) return null
+  if (amount === s.circulating) return s.holderPot
+  return (s.holderPot * amount) / s.circulating
+}
+
+/** What a settled Book's redemption pays, as the caller's own node reads its settler, its factory and its vault. */
+export interface BookRedemption {
+  book: ChainBook
+  /** Whether the settler has liquidated the Book: a redemption is refused before (`NotLiquidated`). */
+  liquidated: boolean
+  /** `settleOf(id)`: the WETH the holders' pot holds now, and the Book tokens that circulate against it. */
+  holderPot: bigint
+  circulating: bigint
+  /** The holder's Book tokens. */
+  held: bigint
+  /** The pot as the settler holds it (`navTotalOf`, `settleOf`'s close fee, cut and holder pot, `lpPotOf`), and the
+   * Book's cost basis and traders, which the kit's sweep step reads to book a sweep's close fee and cut. */
+  pot: BookPot
+  costBasis: bigint
+  traders: number
+  /** What a later `sweepLeftover` would still add to the holders' pot: every token on the vault but the Book's own, WETH
+   * among them, with its balance there. Empty once every sweep has run. */
+  unswept: { token: Address; amount: bigint }[]
+}
+
+/** A settled Book's redemption read on the caller's node: its settler's pot, the holder's Book tokens and every token
+ * still on its vault that a sweep would add to the pot. */
+export async function readBookRedemption(chain: Pick<PublicClient, 'readContract'>, book: ChainBook, holder: Address): Promise<BookRedemption> {
+  const d = book.deployment
+  const abis = bookAbisFor(d) as unknown as Record<string, Abi>
+  const read = <T>(address: Address, abi: Abi, functionName: string, args: readonly unknown[] = []) => chain.readContract({ address, abi, functionName, args } as never) as Promise<T>
+  const id = book.bookId
+  const [settle, navTotal, lpPot, costBasis, traders, tracked, held] = await Promise.all([
+    read<readonly [boolean, bigint, bigint, bigint, bigint, bigint]>(d.settler.address, abis.settler!, 'settleOf', [id]),
+    read<bigint>(d.settler.address, abis.settler!, 'navTotalOf', [id]),
+    read<bigint>(d.settler.address, abis.settler!, 'lpPotOf', [id]),
+    read<bigint>(d.factory.address, abis.factory!, 'costBasis', [id]),
+    read<readonly Address[]>(d.factory.address, abis.factory!, 'tradersOf', [id]),
+    read<readonly Address[]>(book.vault, abis.account!, 'trackedTokens'),
+    read<bigint>(book.token, erc20Abi as Abi, 'balanceOf', [holder]),
+  ])
+  const [liquidated, holderPot, circulating, creatorCutTotal, , closeFee] = settle
+  // WETH counts whether the vault tracks it or not (a WETH sweep moves the vault's whole balance); the Book's own token is
+  // burned by its sweep and adds nothing of the vault's
+  const tokens = [...new Set([BOOK_SHARED.weth, ...tracked].map((t) => getAddress(t)))].filter((t) => !same(t, book.token))
+  const balances = await Promise.all(tokens.map((t) => read<bigint>(t, erc20Abi as Abi, 'balanceOf', [book.vault])))
+  return {
+    book,
+    liquidated,
+    holderPot,
+    circulating,
+    held,
+    pot: { navTotal, closeFee, creatorCutTotal, holderPot, lpPot },
+    costBasis,
+    traders: traders.length,
+    unswept: tokens.map((token, i) => ({ token, amount: balances[i]! })).filter((u) => u.amount > 0n),
+  }
+}
+
+/**
+ * What a redemption of `amount` pays now (the settler's `redeem`, `holderPot × amount / circulating`), and what it would
+ * pay once every sweep left has run: each sweep's WETH (`wethOf`, the caller's own price of each token in WETH, WETH at
+ * its balance; null where none reads) folded into the pot by the kit's sweep step, its close fee and the traders' cut
+ * booked as the settler books them. `unpriced` names the tokens no price read, whose sweeps the second figure leaves out,
+ * so it is at least that. Null where the settler would refuse the redemption.
+ */
+export function bookRedeemPayouts(r: Pick<BookRedemption, 'holderPot' | 'circulating' | 'pot' | 'costBasis' | 'traders' | 'unswept'>, amount: bigint, wethOf: (u: { token: Address; amount: bigint }) => bigint | null): { now: bigint; afterSweeps: bigint; unpriced: Address[] } | null {
+  const now = redeemPayout({ holderPot: r.holderPot, circulating: r.circulating }, amount)
+  if (now === null) return null
+  let pot = r.pot
+  const unpriced: Address[] = []
+  for (const u of r.unswept) {
+    const weth = same(u.token, BOOK_SHARED.weth) ? u.amount : wethOf(u)
+    if (weth === null) {
+      unpriced.push(u.token)
+      continue
+    }
+    if (weth <= 0n) continue
+    pot = potAfterSweep(pot, r.costBasis, weth, r.traders)
+  }
+  const after = redeemPayout({ holderPot: pot.holderPot, circulating: r.circulating }, amount) ?? now
+  return { now, afterSweeps: after > now ? after : now, unpriced }
+}
+
 /** A trade's signed floor held to the caller's rule (Mancer's `holdSignedFloor`): what an act that signs one is given. */
 export type FloorCheck = (q: { tokenIn: Address; tokenOut: Address; amountIn: bigint; minOut: bigint }) => Promise<void>
 
@@ -139,6 +297,13 @@ export async function bookActCalls(
     if (!holdFloor) return refuse(`${action} signs a trade's floor, and nothing holds it to your rule`)
     await holdFloor(q)
   }
+  const expected = (p: BookTradeIntent) => {
+    const e = args.expectPending
+    if (!e) return
+    if (p.quoteSalt !== e.salt || !same(p.tokenIn, e.tokenIn) || !same(p.tokenOut, e.tokenOut) || p.amountIn !== e.amountIn || p.minOut !== e.minOut) {
+      refuse('the vault holds another pending trade than the one you read: nothing is confirmed or executed')
+    }
+  }
   switch (action) {
     case 'arm': return one([armCall(d, id)])
     case 'abort': return one([abortCall(d, id)])
@@ -151,6 +316,7 @@ export async function bookActCalls(
     case 'executeTrade': {
       const pending = intentOfPending((await read(vault, abis.account!, 'pending')) as readonly unknown[])
       if (same(pending.adapter, zeroAddress)) refuse('the vault holds no pending trade')
+      expected(pending)
       vaultRouteCheck({ ...pending, salt: pending.quoteSalt, signature: pending.mancerSig }, book, router)
       await floored(pending)
       return one([executeTradeCall(d, vault)])
@@ -198,6 +364,7 @@ export async function bookActCalls(
     case 'confirmTrade': {
       const pending = intentOfPending((await read(vault, abis.account!, 'pending')) as readonly unknown[])
       if (same(pending.adapter, zeroAddress)) refuse('the vault holds no pending trade')
+      expected(pending)
       vaultRouteCheck({ ...pending, salt: pending.quoteSalt, signature: pending.mancerSig }, book, router)
       await floored(pending)
       return one([confirmTradeCall(d, vault, pending)])
@@ -226,4 +393,94 @@ export async function verifyBookDeployment(chain: Pick<PublicClient, 'getCode'>,
     const code = codes[i]
     if (!code || code === '0x' || keccak256(code).toLowerCase() !== p.runtimeCodeHash.toLowerCase()) refuse(`the code at ${p.address} on your node is not the Books deployment's reviewed build`)
   })
+}
+
+// ------------------------------------------------------------------------------------------- a raise, a settlement
+
+/** A Book's base pair, as its pad says it (`quoteOf(bookId)`, read on the caller's node): WETH on a WETH Book. */
+export async function bookBasePairOf(chain: Pick<PublicClient, 'readContract'>, book: ChainBook): Promise<Address> {
+  const d = book.deployment
+  return getAddress((await chain.readContract({ address: d.pad.address, abi: bookAbisFor(d).pad as Abi, functionName: 'quoteOf', args: [book.bookId] })) as Address)
+}
+
+/**
+ * A raise trade's own call at a floor, rebuilt with the kit's builders from the Book the caller's node reads and its base
+ * pair (`bookBasePairOf`), and the exact approval of what it pulls where the node reads the wallet's allowance short: a
+ * buy in the base pair pulls it to the pad, a sale the Book's tokens. What a raise trade's steps must be, byte for byte
+ * (`checkExactBookCalls`).
+ */
+export async function raiseCalls(
+  chain: Pick<PublicClient, 'readContract'>,
+  book: ChainBook,
+  quote: Address,
+  wallet: Address,
+  r: { side: 'buy' | 'sell'; amountIn: bigint; payWith?: 'eth' | 'quote' },
+  minOut: bigint,
+): Promise<{ payWith: 'eth' | 'quote'; expected: BookActCalls }> {
+  if (r.side !== 'buy' && r.side !== 'sell') refuse('a raise trade is a buy or a sale')
+  if (typeof r.amountIn !== 'bigint' || r.amountIn <= 0n) refuse('amountIn is raw units above zero')
+  const d = book.deployment
+  const isWeth = same(quote, BOOK_SHARED.weth)
+  const payWith = r.payWith ?? (isWeth ? 'eth' : 'quote')
+  if (payWith !== 'eth' && payWith !== 'quote') refuse('payWith is eth or quote')
+  if (payWith === 'eth' && !isWeth) refuse(`this Book raises in ${quote}, not ether: pay with quote`)
+  const call: BookCall = r.side === 'buy'
+    ? payWith === 'eth' ? buyEthCall(d, book.bookId, minOut, wallet, r.amountIn) : buyCall(d, book.bookId, r.amountIn, minOut, wallet)
+    : sellCall(d, book.bookId, r.amountIn, minOut, payWith)
+  const pulled = r.side === 'buy' ? (payWith === 'quote' ? quote : null) : book.token
+  let approval: BookActCalls['approval'] = null
+  if (pulled) {
+    const allowance = (await chain.readContract({ address: pulled, abi: erc20Abi, functionName: 'allowance', args: [wallet, d.pad.address] })) as bigint
+    if (allowance < r.amountIn) approval = { token: pulled, spender: d.pad.address, amount: r.amountIn }
+  }
+  return { payWith, expected: { calls: [call], approval } }
+}
+
+/**
+ * A settlement's own calls (`POST /v1/books/{token}/liquidation-quotes`): the vault's `syncTracked` first where the answer
+ * names one, rebuilt from the tokens the caller's node reads the vault tracking, then the settler's `liquidate` rebuilt with
+ * the kit's builder from the signed sales, each sale's route held to the vault's own rules leg by leg, and the call to the
+ * kit's own liquidation check. The Book and vault the answer names must be the ones the node reads.
+ */
+export async function settlementCalls(
+  chain: Pick<PublicClient, 'readContract'>,
+  book: ChainBook,
+  wallet: Address,
+  answer: Pick<BookLiquidationQuotesResponse, 'bookId' | 'vault' | 'quotes' | 'preSync'>,
+  router: Address,
+): Promise<BookActCalls> {
+  const d = book.deployment
+  if (String(answer.bookId) !== book.bookId.toString() || !same(answer.vault, book.vault)) refuse('the settlement names another Book or vault than the Book your node reads')
+  if (!Array.isArray(answer.quotes)) refuse('the settlement carries no sales')
+  const quotes = answer.quotes.map((x) => parseBookQuote(x))
+  for (const q of quotes) vaultRouteCheck(q, book, router)
+  const liquidate = liquidateCall(d, book.bookId, quotes)
+  const wrong = liquidationCallMismatch(bookCallData(liquidate), { deployment: d, bookId: book.bookId, bookToken: book.token, quotes })
+  if (wrong) refuse(`the settlement does not pass the kit's check: ${wrong}`)
+  const calls: BookCall[] = []
+  if (answer.preSync) calls.push(...(await bookActCalls(chain, book, wallet, 'syncTracked', {}, router)).expected.calls)
+  calls.push(liquidate)
+  return { calls, approval: null }
+}
+
+/**
+ * A vault trade's or a sweep's quote (`POST /v1/books/{token}/vault-quote`) held to what was asked and to the Book the
+ * caller's node reads: the tokens and the amount asked (a trade names the token it buys), a sweep sold for WETH, the
+ * Book's own vault, and a route held to the vault's own rules leg by leg (`vaultRouteCheck`). Its signed floor is the
+ * caller's to hold (`holdSignedFloor`): the parsed quote is answered for it, or null where the answer carries no route (a
+ * sweep of WETH or of the Book's token).
+ */
+export function checkVaultQuote(answer: BookVaultQuoteResponse, body: Pick<BookVaultQuoteRequest, 'purpose' | 'tokenIn' | 'tokenOut' | 'amountIn'>, book: ChainBook, router: Address): BookQuote | null {
+  if (!same(answer.tokenIn, body.tokenIn)) refuse('the vault quote spends another token')
+  // a trade names what it buys: asked with none, the token is the API's choice, and a floor named in the caller's token
+  // would be read against another
+  if (body.purpose !== 'sweep' && !body.tokenOut) refuse('a vault trade names the token it buys (tokenOut)')
+  if (body.tokenOut && !same(answer.tokenOut, body.tokenOut)) refuse('the vault quote buys another token')
+  if (body.amountIn && answer.amountIn !== body.amountIn) refuse('the vault quote spends another amount')
+  if (body.purpose === 'sweep' && body.tokenOut === undefined && answer.route && answer.route !== '0x' && !same(answer.tokenOut, BOOK_SHARED.weth)) refuse('a sweep sells for WETH')
+  if (!same(answer.vault, book.vault)) refuse('the vault quote names another vault than the Book your node reads')
+  if (!answer.route || answer.route === '0x') return null
+  const q = parseBookQuote({ ...answer, signature: answer.signature ?? '0x' })
+  vaultRouteCheck(q, book, router)
+  return q
 }
