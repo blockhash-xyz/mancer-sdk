@@ -2,7 +2,7 @@
 // rails read (rails.ts readProposal), never an instruction. Swap `anthropicProposal` for your provider's call: OpenAI's and
 // xAI's tools take the same JSON Schema as `parameters`.
 
-/** propose_swap, as packages/docs/content/docs/agents/ai-agents.mdx defines it, its token list the bot's own. */
+/** propose_swap: the one tool the model is given, its token list the bot's own. */
 export function proposeSwapTool(tokens: readonly string[]) {
   return {
     name: 'propose_swap',

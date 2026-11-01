@@ -23,7 +23,7 @@ export interface WalletView {
   tokens: { symbol: string; address: `0x${string}`; balance: bigint; valueWei: bigint | null }[]
 }
 
-/** `propose_swap` as the docs' AI agents page defines it. */
+/** `propose_swap` as model.ts gives it to the model. */
 export interface Proposal {
   token: string
   side: 'buy' | 'sell'

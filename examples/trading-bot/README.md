@@ -1,6 +1,8 @@
 # A Mancer trading bot
 
-A bot with its own wallet that does everything on Mancer through [`@blockhash/mancer-sdk`](https://www.npmjs.com/package/@blockhash/mancer-sdk), and an AI agent whose trades the bot's own code checks.
+A bot with its own wallet that does everything on Mancer through [`@blockhash/mancer-sdk`](https://www.npmjs.com/package/@blockhash/mancer-sdk), and a bot that asks a model for its trades and checks each one with its own code.
+
+To connect an AI agent you already run (Claude, ChatGPT, Cursor, Codex and others), you need none of this: add `https://mcp.mancer.xyz` to it, as [Connect an AI agent](https://docs.mancer.xyz/agents/mcp) shows.
 
 `bot.ts` runs, in order:
 
@@ -11,7 +13,7 @@ A bot with its own wallet that does everything on Mancer through [`@blockhash/ma
 5. It trades a Book's vault, where `BOOK_TOKEN` names a Book the wallet is a trader of, on Mancer's signed quote.
 6. It joins the account's live events, replays what the run did, prints each event as it lands, and rejoins from its cursor after a drop.
 
-`agent.ts` asks a model for one `propose_swap`, as the [AI agents](https://docs.mancer.xyz/agents/ai-agents) page defines it.
+`agent.ts` asks a model for one trade through a single tool, `propose_swap` (its schema is in `model.ts`): a listed token, a side, and a share of a holding in basis points.
 The bot's rails decide: the tokens it lists, the largest trade, the daily cap, the gas floor, the price impact and Mancer's simulation.
 The rails' numbers are in `.env`, and the model never holds a key or writes an amount.
 
@@ -57,6 +59,3 @@ Replace `anthropicProposal` with your provider's call: OpenAI's and xAI's tools 
 It also holds the floor rule: a pair no pool prices names Mancer's quote only where `TRUST_QUOTE=1` says so.
 `npm run typecheck` checks every file against the SDK's types.
 
-## Proof on a fork
-
-In a checkout of Mancer's own repository, the bot runs on the SDK's source beside it, and `fork/` runs the whole bot on a local fork of the chain against the API's own server: `fork/README.md` there says how.

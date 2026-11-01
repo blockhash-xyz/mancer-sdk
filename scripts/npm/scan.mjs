@@ -2,7 +2,7 @@
 // Reads published text for what belongs to Mancer's own operations and not to the public: a home folder's path, an IP
 // address, a host under mancer.xyz that is not a public one, an app host on a hosting provider, a package scope of the
 // monorepo, an environment variable of Mancer's own servers, or a reference to an internal note. Contract addresses,
-// ABIs, chain ids and the public hosts (api, docs, stream and www under mancer.xyz) are public facts and pass.
+// ABIs, chain ids and the public hosts (api, docs, mcp, stream and www under mancer.xyz) are public facts and pass.
 //
 //   node scripts/npm/scan.mjs [--patterns <module.mjs>] <file or folder>...
 //
@@ -12,7 +12,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-const PUBLIC_HOSTS = new Set(['api', 'docs', 'stream', 'www'])
+const PUBLIC_HOSTS = new Set(['api', 'docs', 'mcp', 'stream', 'www'])
 const LOCAL_IPS = new Set(['127.0.0.1', '0.0.0.0'])
 
 /** Environment names the published code and its tests read, which are the packages' own and no server's. */
