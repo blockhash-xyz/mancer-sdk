@@ -156,7 +156,7 @@ export function askerFor(deps: AskerDeps): Asker {
       }
     }
     const usedSession = credential.kind === 'session'
-    if (usedSession && res.status === 401) deps.connection.endSession()
+    if (usedSession && res.status === 401) deps.connection.endSession(credential.bearer)
     return { status: res.status, body: parsed, headers: res.headers, usedSession }
   }
 }

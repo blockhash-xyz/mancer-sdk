@@ -56,6 +56,7 @@ export class Connection {
   #token: string | null = null
   #signedIn: SignedIn | null = null
   #pending: PendingSignIn | null = null
+  #epoch = 0
   readonly #drafts = new Map<string, SavedDraft>()
   #lastSeen: number
   readonly #now: () => number
@@ -93,7 +94,15 @@ export class Connection {
     return this.signedIn() ? this.#token : null
   }
 
+  /** Moves on at every sign-in begun, landed or signed out. `complete_sign_in` reads it with the sign-in it completes and
+   * waits on the API's verify: a sign-out, a newer sign-in or a landing in that wait moves it on, and the completion then
+   * lands nothing, so a late verify never signs back in a connection that signed out, nor overwrites a newer sign-in. */
+  get epoch(): number {
+    return this.#epoch
+  }
+
   begin(p: Omit<PendingSignIn, 'at'>): PendingSignIn {
+    this.#epoch++
     this.#pending = { ...p, at: this.#now() }
     return this.#pending
   }
@@ -105,11 +114,24 @@ export class Connection {
     return this.#pending
   }
 
-  complete(token: string, s: SignedIn): void {
+  /** Keeps the session the API answered, where nothing has happened to the sign-in since `epoch` was read; else keeps
+   * nothing and answers false. */
+  complete(token: string, s: SignedIn, epoch: number): boolean {
+    if (epoch !== this.#epoch) return false
+    this.#epoch++
     this.#token = token
     this.#signedIn = s
     this.#pending = null
     this.guard?.signedIn(this, s.wallet)
+    return true
+  }
+
+  /** A completion that failed signs out as `signOut` does, where nothing has happened to the sign-in since `epoch` was
+   * read: a failure that answers late ends neither a newer sign-in begun nor a session another completion landed. */
+  abandon(epoch: number): boolean {
+    if (epoch !== this.#epoch) return false
+    this.signOut()
+    return true
   }
 
   /** Keeps a draft this connection saved, by its id. */
@@ -124,14 +146,17 @@ export class Connection {
     return this.#drafts.get(id) ?? null
   }
 
-  /** Forgets the session the API answered (it ran out, or the API refused it); a sign-in begun beside it stands. */
-  endSession(): void {
+  /** Forgets the session the API answered (it ran out, or the API refused it); a sign-in begun beside it stands. Given the
+   * token a refused call carried, it forgets that session alone: a newer one that landed while the call was out stands. */
+  endSession(token?: string | null): void {
+    if (token != null && token !== this.#token) return
     this.#token = null
     this.#signedIn = null
   }
 
   /** Forgets the sign-in and any begun. It ends nothing on Mancer's side: the token is forgotten, never sent again. */
   signOut(): void {
+    this.#epoch++
     this.#token = null
     this.#signedIn = null
     this.#pending = null

@@ -171,18 +171,18 @@ test("the server refuses to hand an agent a message that is not Mancer's sign-in
 
 test('a connection prints and serializes with no session in it', () => {
   const c = new Connection('c1')
-  c.complete('eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIweGEifQ.c2lnbmF0dXJl', { wallet: agent.address.toLowerCase() as `0x${string}`, account: null, expiresAt: Math.floor(Date.now() / 1000) + 3600 })
+  c.complete('eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIweGEifQ.c2lnbmF0dXJl', { wallet: agent.address.toLowerCase() as `0x${string}`, account: null, expiresAt: Math.floor(Date.now() / 1000) + 3600 }, c.epoch)
   assert.doesNotMatch(JSON.stringify(c), /eyJ/)
   assert.doesNotMatch(inspect(c), /eyJ/)
   assert.doesNotMatch(String(c), /eyJ/)
   assert.equal(c.sessionToken()?.startsWith('eyJ'), true)
   // a session within a minute of its end is not sent
   const late = new Connection('c2')
-  late.complete('t.t.t', { wallet: agent.address.toLowerCase() as `0x${string}`, account: null, expiresAt: Math.floor(Date.now() / 1000) + 30 })
+  late.complete('t.t.t', { wallet: agent.address.toLowerCase() as `0x${string}`, account: null, expiresAt: Math.floor(Date.now() / 1000) + 30 }, late.epoch)
   assert.equal(late.sessionToken(), null)
   // a session that runs out leaves a sign-in begun beside it standing
   const both = new Connection('c3')
-  both.complete('t.t.t', { wallet: agent.address.toLowerCase() as `0x${string}`, account: null, expiresAt: Math.floor(Date.now() / 1000) + 30 })
+  both.complete('t.t.t', { wallet: agent.address.toLowerCase() as `0x${string}`, account: null, expiresAt: Math.floor(Date.now() / 1000) + 30 }, both.epoch)
   both.begin({ wallet: agent.address.toLowerCase() as `0x${string}`, nonce: 'n', message: 'm' })
   assert.equal(both.signedIn(), null)
   assert.equal(both.pending()?.nonce, 'n')

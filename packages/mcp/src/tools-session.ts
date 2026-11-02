@@ -51,6 +51,8 @@ export const SESSION_TOOLS: ToolSpec[] = [
     run: async ({ api, connection }, a) => {
       const pending = connection.pending()
       if (!pending) throw badArgument('No sign-in is waiting on this connection: call sign_in first.', 'no-sign-in')
+      // what lands below lands only if no sign-out, newer sign-in or other completion came while the verify was out
+      const epoch = connection.epoch
       // a process that holds as many signed-in sessions as it can refuses this one before its nonce is spent: the sign-ins
       // that stand are never ended for it (http.ts)
       const refused = connection.guard?.admit(connection, pending.wallet) ?? null
@@ -60,16 +62,23 @@ export const SESSION_TOOLS: ToolSpec[] = [
         v = await ask<{ token?: unknown; account?: unknown }>(api, { method: 'POST', path: '/auth/verify', body: { address: pending.wallet, signature: a.signature, nonce: pending.nonce }, credential: 'none' })
       } catch (e) {
         // the nonce is spent whatever the answer: a new sign-in begins with a new message
-        connection.signOut()
+        connection.abandon(epoch)
         throw e
       }
       const claims = typeof v.token === 'string' ? sessionClaims(v.token) : null
       if (!claims || claims.wallet.toLowerCase() !== pending.wallet) {
-        connection.signOut()
+        connection.abandon(epoch)
         throw new ToolRefusal({ error: 'The API answered no session for this wallet.', code: 'sign-in-mismatch', retryable: false })
       }
       const account = typeof v.account === 'string' && /^0x[0-9a-fA-F]{40}$/.test(v.account) ? (v.account.toLowerCase() as Address) : null
-      connection.complete(v.token as string, { wallet: pending.wallet, account, expiresAt: claims.expiresAt })
+      if (!connection.complete(v.token as string, { wallet: pending.wallet, account, expiresAt: claims.expiresAt }, epoch)) {
+        throw new ToolRefusal({
+          error: 'The sign-in ended while it was completing (a sign-out, or a newer sign-in on this connection): its session was not kept.',
+          code: 'sign-in-superseded',
+          retryable: false,
+          hint: 'Call sign_in again to sign in, or complete_sign_in for the newer sign-in begun.',
+        })
+      }
       return {
         signedIn: true,
         wallet: pending.wallet,

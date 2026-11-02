@@ -1,6 +1,6 @@
 {
   "name": "@blockhash/mancer-sdk",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Mancer's API for a bot with a wallet: sign in, swap, orders, sends, Books and account events, every build checked before it is signed",
   "license": "MIT",
   "author": "Blockhash",

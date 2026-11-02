@@ -1096,7 +1096,7 @@ paths:
         "400": { description: "`bad-address`, `bad-body`, `unknown-field`, `bad-reason`, `bad-details`, `report-self` or `idempotency-key-invalid`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "401": { $ref: "#/components/responses/SessionRefused" }
         "404": { description: "`thesis-not-found`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
-        "409": { description: "`token-is-a-book` or `idempotency-in-progress`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "409": { description: "`token-is-a-book`, `idempotency-in-progress` or `idempotency-key-busy`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "422": { $ref: "#/components/responses/IdempotencyKeyReused" }
         "429": { $ref: "#/components/responses/VotesRateLimited" }
         "503": { $ref: "#/components/responses/TokenThesesUnavailable" }
@@ -3004,7 +3004,7 @@ paths:
                   expiresAt: { type: integer }
         "400": { description: "`bad-address` or `idempotency-key-invalid`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "401": { $ref: "#/components/responses/SessionRefused" }
-        "409": { description: "`wallet-already-linked`, `wallets-max` or `idempotency-in-progress`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "409": { description: "`wallet-already-linked`, `wallets-max`, `idempotency-in-progress` or `idempotency-key-busy`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "422": { $ref: "#/components/responses/IdempotencyKeyReused" }
         "429": { description: "`link-limit` or `rate-limited`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "503": { description: "`profiles-unavailable`, `profiles-not-open` or `store-unavailable`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
@@ -3197,7 +3197,7 @@ paths:
         "400": { description: "`bad-body`, `unknown-field`, `webhook-url-invalid`, `webhook-url-unresolvable`, `webhook-url-not-public` or `webhook-events-invalid`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "401": { $ref: "#/components/responses/SessionRefused" }
         "403": { description: "`key-scope`: a wallet key needs `records` and `read`. Or `key-server-only`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
-        "409": { description: "`webhooks-max`, or `idempotency-in-progress`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "409": { description: "`webhooks-max`, `idempotency-in-progress` or `idempotency-key-busy`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "422": { $ref: "#/components/responses/IdempotencyKeyReused" }
         "429": { $ref: "#/components/responses/RateLimited" }
         "503": { description: "`webhooks-off`, `webhooks-unavailable` or `store-unavailable`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
@@ -3409,7 +3409,7 @@ paths:
         "400": { description: "`bad-id`, `bad-reason`, `bad-details`, `details-too-long`, `report-self` or `idempotency-key-invalid`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "401": { $ref: "#/components/responses/SessionRefused" }
         "404": { description: "`user-not-found` or `nothing-to-report`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
-        "409": { description: "`idempotency-in-progress`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "409": { description: "`idempotency-in-progress` or `idempotency-key-busy`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "422": { $ref: "#/components/responses/IdempotencyKeyReused" }
         "429": { description: "`report-limit` or `rate-limited`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "503": { description: "`profiles-unavailable` or `store-unavailable`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
@@ -5059,7 +5059,7 @@ paths:
                   draft: { type: object, additionalProperties: true, description: "The record, with its 32-hex `id`." }
         "400": { description: "`bad-body`, `factory-not-open`, `draft-name`, `draft-symbol`, `targets-required`, `bad-targets`, `target-unverified` or `idempotency-key-invalid`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "401": { $ref: "#/components/responses/SessionRefused" }
-        "409": { description: "`idempotency-in-progress`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "409": { description: "`idempotency-in-progress` or `idempotency-key-busy`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "422": { $ref: "#/components/responses/IdempotencyKeyReused" }
         "429": { $ref: "#/components/responses/BooksRateLimited" }
         "503": { $ref: "#/components/responses/BooksUnavailable" }
@@ -5389,7 +5389,7 @@ paths:
         "400": { description: "`bad-address`, `bad-body`, `unknown-field`, `bad-reason`, `bad-details`, `report-self` or `idempotency-key-invalid`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "401": { $ref: "#/components/responses/SessionRefused" }
         "404": { description: "`not-a-book` or `thesis-not-found`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
-        "409": { description: "`idempotency-in-progress`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "409": { description: "`idempotency-in-progress` or `idempotency-key-busy`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "422": { $ref: "#/components/responses/IdempotencyKeyReused" }
         "429": { $ref: "#/components/responses/BooksRateLimited" }
         "503": { description: "`book-indexing`, `books-index-unavailable`, `books-state-unavailable`, `books-deployment-unverified` or `store-unavailable`. See [Books errors](/api/guides/books/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
@@ -5946,7 +5946,7 @@ paths:
         "400": { description: "`stocks-ack-required`, `bad-key-name`, `bad-scopes`, `unknown-field`, `bad-body` or `idempotency-key-invalid`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "401": { $ref: "#/components/responses/SessionRefused" }
         "403": { description: "`key-session-only` or `key-server-only`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
-        "409": { description: "`keys-max`, `key-name-taken` or `idempotency-in-progress`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "409": { description: "`keys-max`, `key-name-taken`, `idempotency-in-progress` or `idempotency-key-busy`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "422": { $ref: "#/components/responses/IdempotencyKeyReused" }
         "429": { $ref: "#/components/responses/RateLimited" }
         "503": { description: "`self-serve-keys-off`: minting is not open yet; or `store-unavailable`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
@@ -6605,6 +6605,7 @@ components:
         - forbidden
         - geo-restricted
         - idempotency-in-progress
+        - idempotency-key-busy
         - idempotency-key-invalid
         - idempotency-key-reused
         - impact-too-high
