@@ -4,15 +4,17 @@ name: Publish
 # workflow of this repository by its OIDC token, so no npm token is stored anywhere. Each package's trusted publisher on
 # npmjs.com names this repository, this file (publish.yml) and the environment `npm`.
 #
-# A tag `v<version>` starts it, and only a tag on a commit of main whose two packages are both that version publishes.
-# `check` holds no credential: it installs from the lock with no install script, tests, builds, scans and packs, and
-# hands on the two tarballs it checked with their hashes. `publish` alone may ask GitHub for an OIDC token, in the `npm`
-# environment (a person approves each run, from a `v*` tag alone): it installs nothing but npm, runs no code of this
-# repository, and publishes the very tarballs `check` read. A version already on npm is skipped where its tarball is
-# the same one, so a run can be repeated.
+# Every push to main runs it, and so does a tag `v<version>` on a commit of main. `plan` reads both packages' version
+# (they must be one) and asks npm whether each is there: where both are, nothing more runs. `check` holds no credential:
+# it installs from the lock with no install script, tests, builds, scans and packs, and hands on the two tarballs it
+# checked with their hashes. `publish` alone may ask GitHub for an OIDC token, in the `npm` environment (a person
+# approves each run, from main or a `v*` tag alone): it installs nothing but npm, runs no code of this repository, and
+# publishes the very tarballs `check` read, each only where npm does not hold its version yet. `tag` then names the
+# commit `v<version>` where no such tag exists, with the workflow's own token and no checkout.
 
 on:
   push:
+    branches: [main]
     tags: ['v*']
 
 permissions: {}
@@ -22,14 +24,67 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  plan:
+    if: (github.ref_type == 'branch' && github.ref == 'refs/heads/main') || (github.ref_type == 'tag' && startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.ref.outputs.version }}
+      publish: ${{ steps.npm.outputs.publish }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: The commit is main's, and both packages name one version (a tag's own)
+        id: ref
+        run: |
+          set -euo pipefail
+          commit="$(git rev-parse HEAD)"
+          if ! git merge-base --is-ancestor "$commit" origin/main; then echo "::error::$GITHUB_REF_NAME names $commit, which is not on main"; exit 1; fi
+          sdk="$(node -p "require('./packages/sdk/package.json').version")"
+          mcp="$(node -p "require('./packages/mcp/package.json').version")"
+          if [ "$sdk" != "$mcp" ]; then echo "::error::the SDK is $sdk and the MCP server $mcp"; exit 1; fi
+          version="$sdk"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then echo "::error::$version is no version"; exit 1; fi
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            tagged="$(git rev-parse "refs/tags/${GITHUB_REF_NAME}^{commit}")"
+            if [ "$commit" != "$tagged" ]; then echo "::error::the checkout is $commit and the tag names $tagged"; exit 1; fi
+            if [ "$GITHUB_REF_NAME" != "v$version" ]; then echo "::error::the packages are $version, and the tag is $GITHUB_REF_NAME"; exit 1; fi
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Which of the two npm does not hold yet
+        id: npm
+        env:
+          VERSION: ${{ steps.ref.outputs.version }}
+        run: |
+          set -euo pipefail
+          publish=false
+          for p in sdk mcp; do
+            name="@blockhash/mancer-$p"
+            if [ -n "$(npm view "$name@$VERSION" version --userconfig /dev/null 2>/dev/null || true)" ]; then
+              echo "$name@$VERSION is on npm already"
+            else
+              echo "$name@$VERSION is not on npm: it is published"
+              publish=true
+            fi
+          done
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+
   check:
-    if: github.ref_type == 'tag' && startsWith(github.ref, 'refs/tags/v')
+    needs: plan
+    if: needs.plan.outputs.publish == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
     outputs:
-      version: ${{ steps.ref.outputs.version }}
+      version: ${{ needs.plan.outputs.version }}
       sdk-sha256: ${{ steps.sums.outputs.sdk }}
       mcp-sha256: ${{ steps.sums.outputs.mcp }}
     steps:
@@ -40,21 +95,6 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
-      - name: The tag is a commit on main, and names both packages' version
-        id: ref
-        run: |
-          set -euo pipefail
-          commit="$(git rev-parse HEAD)"
-          tagged="$(git rev-parse "refs/tags/${GITHUB_REF_NAME}^{commit}")"
-          if [ "$commit" != "$tagged" ]; then echo "::error::the checkout is $commit and the tag names $tagged"; exit 1; fi
-          if ! git merge-base --is-ancestor "$commit" origin/main; then echo "::error::$GITHUB_REF_NAME names $commit, which is not on main"; exit 1; fi
-          version="${GITHUB_REF_NAME#v}"
-          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then echo "::error::$GITHUB_REF_NAME is no version"; exit 1; fi
-          for p in packages/sdk packages/mcp; do
-            v="$(node -p "require('./$p/package.json').version")"
-            if [ "$v" != "$version" ]; then echo "::error::$p is $v, and the tag is $GITHUB_REF_NAME"; exit 1; fi
-          done
-          echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Install from the lock, running no package's install script
         run: npm ci --ignore-scripts
       - run: npm run typecheck
@@ -81,7 +121,7 @@ jobs:
           retention-days: 7
 
   publish:
-    needs: check
+    needs: [plan, check]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: npm
@@ -123,9 +163,31 @@ jobs:
             ours="sha512-$(openssl dgst -sha512 -binary "tarballs/$p.tgz" | base64 -w0)"
             theirs="$(npm view "$name@$VERSION" dist.integrity --userconfig /dev/null 2>/dev/null || true)"
             if [ -n "$theirs" ]; then
-              if [ "$theirs" != "$ours" ]; then echo "::error::$name@$VERSION is on npm as $theirs, and the tarball checked is $ours"; exit 1; fi
-              echo "$name@$VERSION is on npm already, the same tarball: skipped"
+              if [ "$theirs" = "$ours" ]; then echo "$name@$VERSION is on npm already, the same tarball: skipped"
+              else echo "::notice::$name@$VERSION is on npm already as $theirs (published another way); the tarball checked is $ours: skipped"; fi
             else
-              npm publish "tarballs/$p.tgz" --provenance --access public --ignore-scripts
+              # a path with no ./ is read by npm as a GitHub shorthand (owner/repo) and fetched with git: exit 128
+              npm publish "./tarballs/$p.tgz" --provenance --access public --ignore-scripts
             fi
           done
+
+  tag:
+    needs: [plan, publish]
+    if: github.ref_type == 'branch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: The commit is named v<version>, where no tag of that name stands
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          tag="v$VERSION"
+          if held="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" --jq .object.sha 2>/dev/null)"; then
+            echo "::notice::$tag stands already (at the object $held): left as it is"
+            exit 0
+          fi
+          gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$tag" -f sha="$GITHUB_SHA" --jq .ref
