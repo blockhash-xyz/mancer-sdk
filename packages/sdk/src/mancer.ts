@@ -353,8 +353,16 @@ export class Mancer extends MancerClient {
       await floorBesidePool('swap', r, this.publicClient, trusted, base, floor)
     }
     if (floor <= 0n) throw new MancerCheckError('swap', 'the floor is zero')
-    // a launch route's envelope (a router build's is a plain swap's: checks.ts `routerEnvelopeCheck`)
-    const envelope = !!quote.execution && quote.execution.entrypoint !== 'router' && Array.isArray(quote.execution.transactions) && quote.execution.transactions.length > 0
+    // a launch route's envelope (a router build's is a plain swap's: checks.ts `routerEnvelopeCheck`). The answer is JSON,
+    // so its entrypoint is read as a value: the two this SDK reads, and no launch where the caller excluded one
+    const entrypoint: unknown = quote.execution ? (quote.execution as { entrypoint?: unknown }).entrypoint : undefined
+    if (quote.execution && entrypoint !== 'router' && entrypoint !== 'launch-coordinator') {
+      throw new MancerCheckError('swap', "the answer's envelope names an entrypoint this SDK does not read")
+    }
+    if (r.excludeAccountBound && entrypoint === 'launch-coordinator') {
+      throw new MancerCheckError('swap', 'the answer is a launch route, which this request excluded')
+    }
+    const envelope = entrypoint === 'launch-coordinator' && Array.isArray(quote.execution!.transactions) && quote.execution!.transactions.length > 0
     if (envelope) await this.trustedLaunchStack()
     const checked = checkSwapSteps(quote, {
       wallet,

@@ -135,6 +135,9 @@ export function executionEnvelopeMismatch(
     return 'execution contains an early swap transaction'
   }
 
+  if (execution.entrypoint !== 'router' && execution.entrypoint !== 'launch-coordinator') {
+    return 'unsupported execution entrypoint'
+  }
   const expectedTarget =
     execution.entrypoint === 'router'
       ? expected.router

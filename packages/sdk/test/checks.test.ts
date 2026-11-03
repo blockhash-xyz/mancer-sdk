@@ -157,6 +157,36 @@ test("a launch route's steps are its envelope's transactions, held to the site's
   assert.throws(() => checkSwapSteps(quote(ready(paysOther.transactions.map((t) => step(t.kind, t.to, t.data))), { execution: paysOther }), launchAsk, TRUSTED), /recipient/)
 })
 
+test("an envelope naming any entrypoint but the two the SDK reads is refused, and every allowance is held to its pinned spender", () => {
+  // Hey Research Lab's report (2026-11-03): with entrypoint 'coordinator' the site's check ran no requirement check, and an
+  // approval of the input or of any other token to anyone passed
+  const launch = TRUSTED.launch!
+  const tx = (kind: 'approval' | 'swap', to: Address, data: Hex) => ({ chain: 'robinhood' as const, chainId: 4663 as const, kind, to, data, value: '0' })
+  const envelopeWith = (entrypoint: unknown, inputSpender: Address, roundSpender: Address) => ({
+    version: 1 as const, taker: ME, recipient: ME, entrypoint: entrypoint as 'launch-coordinator',
+    requirements: [
+      { kind: 'erc20-allowance' as const, token: TRUSTED.usdg, spender: inputSpender, amount: '1000000' },
+      { kind: 'erc20-allowance' as const, token: TRUSTED.weth, spender: roundSpender, amount: '5' },
+    ],
+    transactions: [
+      tx('approval', TRUSTED.usdg, approveData(inputSpender, 1_000_000n)),
+      tx('approval', TRUSTED.weth, approveData(roundSpender, 5n)),
+      tx('swap', launch.coordinator, executeData()),
+    ],
+  })
+  const launchAsk = { ...swapAsk, roundTripCap: 10n }
+  const run = (execution: ReturnType<typeof envelopeWith>) =>
+    checkSwapSteps(quote(ready(execution.transactions.map((t) => step(t.kind, t.to, t.data))), { execution }), launchAsk, TRUSTED)
+  for (const entrypoint of ['coordinator', '', 'Launch-Coordinator', 'launch-coordinator ', 7, null]) {
+    assert.throws(() => run(envelopeWith(entrypoint, ATTACKER, ATTACKER)), /entrypoint this SDK does not read/)
+    assert.throws(() => run(envelopeWith(entrypoint, launch.allowanceTarget, launch.pads[0]!.adapter)), /entrypoint this SDK does not read/)
+  }
+  // the launch coordinator's own envelope: the input only to its allowance target, the round trip only to a pinned adapter
+  assert.equal(run(envelopeWith('launch-coordinator', launch.allowanceTarget, launch.pads[0]!.adapter)).steps.length, 3)
+  assert.throws(() => run(envelopeWith('launch-coordinator', ATTACKER, launch.pads[0]!.adapter)), /spender/)
+  assert.throws(() => run(envelopeWith('launch-coordinator', launch.allowanceTarget, ATTACKER)), /spender/)
+})
+
 test("an order's setup: a wrap and the orders contract's approval, held to the allowance the bot's own node reads plus the order's pull", () => {
   const deposit = '0xd0e30db0' as Hex
   // the wallet's allowance to the orders contract, as its own node reads it: 500; the order pulls 2,000

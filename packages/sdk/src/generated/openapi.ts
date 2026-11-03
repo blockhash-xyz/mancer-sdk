@@ -6963,7 +6963,10 @@ export interface Operations {
       points: {
         /** The day's start */
         t?: number
+        /** The tokens' value and `nativeUsd` where it is a number. */
         valueUsd?: number
+        /** The native ether at the day's last block (today's: now) at wrapped ether's close. Null where it is not read yet or did not read. */
+        nativeUsd?: number | null
       }[]
       tokens: {
         token?: Address
@@ -6972,7 +6975,18 @@ export interface Operations {
         /** Exact integer, unscaled. */
         balance?: string
         valueUsd?: number | null
+        /** Present and true on the native ether row, under the zero address. */
+        native?: boolean
       }[]
+      /** What the answer read of the wallet's native ether. */
+      native?: {
+        /** Points whose `nativeUsd` is null: their value is the wallet's tokens alone. */
+        missing: number
+        /** Some of them are being read now. The same request a few seconds on answers more of them. */
+        partial: boolean
+        /** Some of them could not be read now (a read upstream failed). Asking again later may answer them. */
+        unread: boolean
+      }
     }
   }
   /** List a wallet's NFT moves */
@@ -7041,8 +7055,11 @@ export interface Operations {
       source: "indexer"
       /** The wallet has more than 90,000 transfer rows; the figures cover the first 90,000. */
       truncated: boolean
+      /** Present and true where the wallet's native ether did not read: no row of it, and `totals.valueUsd` is its tokens alone. */
+      nativeUnread?: boolean
       totals: {
         costBasisUsd: number
+        /** The tokens' value and the native ether's. The cost and the profits are the tokens' alone. */
         valueUsd: number
         unrealizedUsd: number
         realizedUsd: number
@@ -7061,7 +7078,10 @@ export interface Operations {
         avgCostUsd: number | null
         /** A transfer came before the token's first price and was priced at its first close. */
         estimated: boolean
+        /** The day of the token's first transfer, YYYY-MM-DD. Empty for native ether, whose transfers no log names. */
         firstDay: string
+        /** Present and true on the native ether row (the zero address): its balance read from the chain now, `unrealizedUsd` and `avgCostUsd` null. */
+        native?: boolean
       }[]
     }
   }

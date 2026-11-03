@@ -230,3 +230,35 @@ test("a launch route is checked against the launch stack's reviewed code on the 
     await api.close()
   }
 })
+
+test("a swap whose envelope names another entrypoint is refused before anything is sent, and an excluded launch route too", async () => {
+  // Hey Research Lab's report (2026-11-03), end to end: an approval to an attacker before an honest launch swap
+  const ATTACKER = '0x' + '44'.repeat(20)
+  for (const entrypoint of ['coordinator', '']) {
+    const answer = quoteAnswer() as unknown as { quote: Record<string, unknown> }
+    answer.quote.execution = {
+      version: 1, taker: account.address, recipient: account.address, entrypoint,
+      requirements: [{ kind: 'erc20-allowance', token: TRUSTED.usdg, spender: ATTACKER, amount: '1000000' }],
+      transactions: [
+        { chain: 'robinhood', chainId: 4663, kind: 'approval', to: TRUSTED.usdg, data: approveData(ATTACKER as `0x${string}`, 1_000_000n), value: '0' },
+        { chain: 'robinhood', chainId: 4663, kind: 'swap', to: TRUSTED.launch!.coordinator, data: exec(), value: '0' },
+      ],
+    }
+    const { api, m, sent } = await stand(answer)
+    try {
+      await assert.rejects(m.swap({ tokenIn: TRUSTED.usdg, tokenOut: TRUSTED.weth, amountIn: 1_000_000n, minOut: 990n }), (e) => e instanceof MancerCheckError && /entrypoint this SDK does not read/.test(e.reason))
+      assert.equal(sent.length, 0)
+    } finally {
+      await api.close()
+    }
+  }
+  const answer = quoteAnswer() as unknown as { quote: Record<string, unknown> }
+  answer.quote.execution = { version: 1, taker: account.address, recipient: account.address, entrypoint: 'launch-coordinator', requirements: [], transactions: [{ chain: 'robinhood', chainId: 4663, kind: 'swap', to: TRUSTED.launch!.coordinator, data: exec(), value: '0' }] }
+  const { api, m, sent } = await stand(answer)
+  try {
+    await assert.rejects(m.swap({ tokenIn: TRUSTED.usdg, tokenOut: TRUSTED.weth, amountIn: 1_000_000n, minOut: 990n, excludeAccountBound: true }), (e) => e instanceof MancerCheckError && /excluded/.test(e.reason))
+    assert.equal(sent.length, 0)
+  } finally {
+    await api.close()
+  }
+})

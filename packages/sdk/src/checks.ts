@@ -198,7 +198,10 @@ export function checkSwapSteps(quote: Quote, e: SwapCheck, trusted: TrustedContr
   if (execution && Array.isArray(execution.transactions) && execution.transactions.length && execution.entrypoint === 'router') {
     routerEnvelopeCheck(execution, steps, e, trusted)
   } else if (execution && Array.isArray(execution.transactions) && execution.transactions.length) {
+    // the answer is JSON: an entrypoint the types name is no promise, and any other name is refused before it is read
+    if (execution.entrypoint !== 'launch-coordinator') refuse('swap', "the answer's envelope names an entrypoint this SDK does not read")
     const launch = trusted.launch
+    if (!launch) refuse('swap', 'no launch stack is pinned on this chain')
     const wrong = executionEnvelopeMismatch(execution as never, {
       account: e.wallet,
       chainId: trusted.chainId,
@@ -210,14 +213,17 @@ export function checkSwapSteps(quote: Quote, e: SwapCheck, trusted: TrustedContr
     })
     if (wrong) refuse('swap', `the launch envelope does not pass the site's check: ${wrong}`)
     if (!same(e.recipient, e.wallet)) refuse('swap', 'an execution envelope pays the wallet that sends it, and this swap names another recipient')
-    // every allowance exact: the input's to what the swap spends, a launch's round trip under the cap the caller named
+    // every allowance exact and to its pinned spender: the input's to what the swap spends, for the coordinator's allowance
+    // target alone; a launch's round trip under the cap the caller named, for a pinned pad's adapter alone
     for (const r of execution.requirements) {
       if (r.kind !== 'erc20-allowance') continue
       const amount = BigInt(String(r.amount ?? '0'))
       if (same(r.token, e.tokenIn)) {
+        if (!same(r.spender, launch!.allowanceTarget)) refuse('swap', "the envelope approves the input to a spender other than the launch coordinator's allowance target")
         if (amount !== e.amountIn) refuse('swap', 'the envelope approves the input for another amount than the one you spend')
-      } else if (amount > (e.roundTripCap ?? 0n)) {
-        refuse('swap', "the envelope's round-trip allowance is over the cap the swap allows")
+      } else {
+        if (!launch!.pads.some((p) => same(p.adapter, r.spender))) refuse('swap', "the envelope's round-trip allowance names a spender that is no pinned pad's adapter")
+        if (amount > (e.roundTripCap ?? 0n)) refuse('swap', "the envelope's round-trip allowance is over the cap the swap allows")
       }
     }
     if (steps.length !== execution.transactions.length) refuse('swap', 'the steps are not the envelope transactions')

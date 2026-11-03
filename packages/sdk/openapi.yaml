@@ -1842,7 +1842,7 @@ paths:
       summary: "Get a wallet's profit and loss"
       operationId: getWalletPnl
       security: []
-      description: "Per token, the wallet's cost basis at average cost and its realized and unrealized profit, from every transfer it ever had, each priced at the token's close that day. Only tokens with $1,000 of 2% depth across their pools and known decimals count."
+      description: "Per token, the wallet's cost basis at average cost and its realized and unrealized profit, each transfer priced at its day's close. Only tokens with $1,000 of 2% depth and known decimals count. Native ether is one row under the zero address, at wrapped ether's close, with no cost or profit."
       parameters:
         - name: address
           in: path
@@ -1860,12 +1860,13 @@ paths:
                   address: { $ref: "#/components/schemas/Address" }
                   source: { type: string, enum: [indexer] }
                   truncated: { description: "The wallet has more than 90,000 transfer rows; the figures cover the first 90,000.", type: boolean }
+                  nativeUnread: { description: "Present and true where the wallet's native ether did not read: no row of it, and `totals.valueUsd` is its tokens alone.", type: boolean }
                   totals:
                     type: object
                     required: [costBasisUsd, valueUsd, unrealizedUsd, realizedUsd]
                     properties:
                       costBasisUsd: { type: number }
-                      valueUsd: { type: number }
+                      valueUsd: { type: number, description: "The tokens' value and the native ether's. The cost and the profits are the tokens' alone." }
                       unrealizedUsd: { type: number }
                       realizedUsd: { type: number }
                   tokens:
@@ -1884,7 +1885,8 @@ paths:
                         realizedUsd: { type: number }
                         avgCostUsd: { type: number, nullable: true, description: "Average cost of one whole token while the balance is positive." }
                         estimated: { description: "A transfer came before the token's first price and was priced at its first close.", type: boolean }
-                        firstDay: { type: string, format: date }
+                        firstDay: { type: string, description: "The day of the token's first transfer, YYYY-MM-DD. Empty for native ether, whose transfers no log names." }
+                        native: { type: boolean, description: "Present and true on the native ether row (the zero address): its balance read from the chain now, `unrealizedUsd` and `avgCostUsd` null." }
         "400": { description: "`bad-address`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "503": { description: "`store-unavailable`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /v1/wallets/{address}/history:
@@ -1893,7 +1895,7 @@ paths:
       summary: "Get a wallet's value over time"
       operationId: getWalletHistory
       security: []
-      description: "The wallet's ERC-20 holdings valued each UTC day over the last `days`, at that day's closing prices. Only tokens with $1,000 of 2% depth across their pools count, and a holding is worth at most 100 times that depth."
+      description: "The wallet's ERC-20 holdings and native ether valued each UTC day over the last `days`, at that day's closes. A token counts with $1,000 of 2% depth and is worth at most 100 times it. A first view reads the ether's past days a few a second: while `native.partial` is true, ask again."
       parameters:
         - name: address
           in: path
@@ -1920,7 +1922,8 @@ paths:
                       type: object
                       properties:
                         t: { type: integer, description: The day's start, Unix seconds. }
-                        valueUsd: { type: number }
+                        valueUsd: { type: number, description: "The tokens' value and `nativeUsd` where it is a number." }
+                        nativeUsd: { type: number, nullable: true, description: "The native ether at the day's last block (today's: now) at wrapped ether's close. Null where it is not read yet or did not read." }
                   tokens:
                     type: array
                     items:
@@ -1931,6 +1934,15 @@ paths:
                         decimals: { type: integer }
                         balance: { type: string, description: "Exact integer, unscaled." }
                         valueUsd: { type: number, nullable: true }
+                        native: { type: boolean, description: "Present and true on the native ether row, under the zero address." }
+                  native:
+                    type: object
+                    description: "What the answer read of the wallet's native ether."
+                    required: [missing, partial, unread]
+                    properties:
+                      missing: { type: integer, description: "Points whose `nativeUsd` is null: their value is the wallet's tokens alone." }
+                      partial: { type: boolean, description: "Some of them are being read now. The same request a few seconds on answers more of them." }
+                      unread: { type: boolean, description: "Some of them could not be read now (a read upstream failed). Asking again later may answer them." }
         "400":
           description: "`bad-address`. See [Errors](/api/guides/errors)."
           content:
@@ -5561,7 +5573,7 @@ paths:
               schema: { $ref: "#/components/schemas/BooksError" }
         "404": { $ref: "#/components/responses/BooksNotABook" }
         "409":
-          description: "`wrong-phase`, `budget-exhausted`, `reversal-cooldown`, `reverses-live-order`, `amount-exceeds-tracked`, `vault-tracks-16`, `weth-spot`, `deadline-past-unlock`, `token-refused`, `stock-not-receivable`, `no-reference`, `no-route`, `route-pool-refused`, `middle-refused`, `route-touches-book-token`, `middle-not-swept`, `unknown-leg`, `route-mismatch`, `price-moved`, `impact-too-high`, `pool-take-too-high`, `vault-simulation-failed` or `pending-mismatch`. See [Books errors](/api/guides/books/errors)."
+          description: "`wrong-phase`, `budget-exhausted`, `reversal-cooldown`, `reverses-live-order`, `amount-exceeds-tracked`, `vault-tracks-16`, `weth-spot`, `deadline-past-unlock`, `token-refused`, `stock-not-receivable`, `no-reference`, `no-route`, `route-pool-refused`, `middle-refused`, `route-touches-book-token`, `middle-not-swept`, `unknown-leg`, `route-mismatch`, `price-moved`, `pool-take-too-high`, `vault-simulation-failed` or `pending-mismatch`. See [Books errors](/api/guides/books/errors)."
           content:
             application/json:
               schema: { $ref: "#/components/schemas/BooksError" }
