@@ -3,14 +3,16 @@
 // beside this package in the published repository): every schema of
 // `components.schemas` as a type, and every operation's path, query, body and success answer under its operationId.
 // Run it after the reference changes: `npm run gen:types -w @blockhash/mancer-sdk`. `--check` writes nothing and fails where the
-// checked-in file differs from what the reference makes, which the SDK's tests run.
+// checked-in file differs from what the reference makes, which the SDK's tests run. `--spec=<file>` and `--out=<file>` read and
+// write other paths (Mancer's mirror makes the published repository's types from the spec it publishes).
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { parse } from 'yaml'
 
+const arg = (name) => process.argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3)
 const COPY = fileURLToPath(new URL('../openapi.yaml', import.meta.url))
-const SPEC = existsSync(COPY) ? COPY : fileURLToPath(new URL('../../docs/public/openapi.yaml', import.meta.url))
-const OUT = fileURLToPath(new URL('../src/generated/openapi.ts', import.meta.url))
+const SPEC = arg('spec') ?? (existsSync(COPY) ? COPY : fileURLToPath(new URL('../../docs/public/openapi.yaml', import.meta.url)))
+const OUT = arg('out') ?? fileURLToPath(new URL('../src/generated/openapi.ts', import.meta.url))
 
 const spec = parse(readFileSync(SPEC, 'utf8'))
 const schemas = spec.components?.schemas ?? {}

@@ -33,4 +33,4 @@ export { transferCall, transferTransaction, type TransferAsset } from './kit/tra
 // receiver's raw body with WebCrypto, in Node and in a browser alike
 export { WEBHOOK_EVENT_ID_HEADER, WEBHOOK_EVENT_TYPE_HEADER, WEBHOOK_ID_HEADER, WEBHOOK_PING_KIND, WEBHOOK_SIGNATURE_HEADER, WEBHOOK_TIMESTAMP_HEADER, WEBHOOK_TOLERANCE_SEC, checkWebhookSignature, parseWebhookSignature, verifyWebhookSignature, webhookSignatureOf, type ParsedWebhookSignature, type WebhookSignatureCheck, type WebhookSignatureFailure } from './kit/webhooks'
 export { orderTypedDataV3, orderV3ToSign, type OrderSigner, type PlaceOrderParams } from './kit/site/order-typed-data'
-export { executionEnvelopeMismatch, type ExecutionExpectation, type IntegratorExecution } from './kit/site/launch-execution'
+export { executionEnvelopeMismatch, launchRouteChainMismatch, safeLaunchPadLaunchIdAbi, type ExecutionExpectation, type IntegratorExecution } from './kit/site/launch-execution'

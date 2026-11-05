@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.3.0",
-    "@blockhash/mancer-sdk": "^0.2.2",
+    "@blockhash/mancer-sdk": "^0.2.3",
     "viem": "2.55.10"
   },
   "devDependencies": {

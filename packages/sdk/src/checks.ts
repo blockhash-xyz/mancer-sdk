@@ -136,8 +136,9 @@ export interface SwapCheck {
   maxFeeBps: number
   /** The integrator fee the caller asked for: its recipient and its rate. Without one, a fee leg is refused. */
   integratorFee?: { recipient: Address; bps: number } | null
-  /** The most an account-bound launch route's round-trip allowance (its output token, to the pad's adapter) may be.
-   * Without it, a launch route that names one is refused. */
+  /** The most an account-bound launch route's round-trip allowance (to the pad's adapter) may be, in its own token's
+   * units: a purchase's is the bought launch token, a sale's its pad's quote token. Without it, a launch route that
+   * names one is refused. */
   roundTripCap?: bigint
   /** How long the call may stay valid, in seconds. Default one hour. */
   maxDeadlineSec?: number
@@ -173,6 +174,41 @@ function swapCall(i: number, data: Hex, value: string, e: SwapCheck, runner: Add
   if (legs.mismatch) refuse('swap', legRefusal(legs.mismatch), i)
   const router = decodeRouterCall(data)!
   return { step: i, kind: 'swap', to: getAddress(to), value: BigInt(value), does: describeSwap(router, legs.legs), router, legs: legs.legs }
+}
+
+/**
+ * The most a launch route's round-trip allowance may be, in its own token's units, for `SwapCheck.roundTripCap`. A
+ * purchase's round trip is the bought launch token, the swap's output, held to `outputCap` (twice what the caller's own
+ * reference says the swap pays, or twice the caller's floor). A sale, marked by its operator requirement, is paid in
+ * its pad's quote token: held to `outputCap` where that is the swap's output, and otherwise to twice what the pinned
+ * lens says the pad pays this sale (`saleQuote`, read on the caller's own node). A pad or lens this SDK does not pin, a
+ * launch id that is no number, or a lens that does not answer leaves a cap of zero, and the check then refuses any round
+ * trip. Hey Research Lab's second note (2026-11-03): the cap had been in the output's units whatever token it held.
+ */
+export async function launchRoundTripCap(
+  execution: Execution,
+  stack: NonNullable<TrustedContracts['launch']>,
+  o: { tokenOut: Address; outputCap: bigint; saleQuote: (lens: Address, pad: Address, launchId: bigint) => Promise<bigint> },
+): Promise<bigint> {
+  const requirements = Array.isArray(execution.requirements) ? execution.requirements : []
+  const operator = requirements.find((r) => !!r && typeof r === 'object' && r.kind === 'protocol-operator')
+  if (!operator) return o.outputCap
+  const pad = stack.pads.find((p) => same(p.pad, String(operator.target ?? '')))
+  if (!pad) return 0n
+  if (same(pad.quoteToken, o.tokenOut)) return o.outputCap
+  let launchId: bigint
+  try {
+    launchId = BigInt(String(operator.launchId))
+  } catch {
+    return 0n
+  }
+  if (!stack.lens || launchId <= 0n) return 0n
+  try {
+    const paid = await o.saleQuote(stack.lens, pad.pad, launchId)
+    return paid > 0n ? 2n * paid : 0n
+  } catch {
+    return 0n
+  }
 }
 
 /**

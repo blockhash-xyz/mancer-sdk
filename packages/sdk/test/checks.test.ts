@@ -5,7 +5,7 @@ import { BOOK_DEPLOYMENTS } from '../src/kit/books/deployments'
 import { ERC20_TRANSFER_ABI, ERC721_TRANSFER_ABI } from '../src/kit/transfer'
 import { bookCallData, redeemCall, stakeCall } from '../src/kit/books/calls'
 import { ORDER_EIP712_TYPES_V3, ZERO_OCO_GROUP, orderToAbiV3, ordersDomainV3, type MancerOrderV3 } from '../src/kit/orders'
-import { mancerOrdersV3Abi } from '../src/kit/abi'
+import { mancerOrdersV3Abi, safeLaunchV2OperatorAbi } from '../src/kit/abi'
 import {
   MancerCheckError,
   checkBookSteps,
@@ -14,6 +14,7 @@ import {
   checkOrderSetupSteps,
   checkSwapSteps,
   checkTransferSteps,
+  launchRoundTripCap,
 } from '../src/index'
 import type { Quote, ReadySteps } from '../src/generated/openapi'
 import { NOW, SIM_OK, TRUSTED, approveData, executeData } from './helpers'
@@ -129,52 +130,114 @@ test("a router build's ordered envelope is checked as a plain swap, paying the r
 
 test("a launch route's steps are its envelope's transactions, held to the site's envelope check and the pinned launch stack", () => {
   const launch = TRUSTED.launch!
+  // a purchase of a launch's token: its round trip is the bought token, which no pad is quoted in
+  const LAUNCH = getAddress('0x' + '55'.repeat(20))
   const tx = (kind: 'approval' | 'swap', to: Address, data: Hex) => ({ chain: 'robinhood' as const, chainId: 4663 as const, kind, to, data, value: '0' })
   const approval = approveData(launch.allowanceTarget, 1_000_000n)
   const execution = {
     version: 1 as const, taker: ME, recipient: ME, entrypoint: 'launch-coordinator' as const,
     requirements: [
       { kind: 'erc20-allowance' as const, token: TRUSTED.usdg, spender: launch.allowanceTarget, amount: '1000000' },
-      { kind: 'erc20-allowance' as const, token: TRUSTED.weth, spender: launch.pads[0]!.adapter, amount: '5' },
+      { kind: 'erc20-allowance' as const, token: LAUNCH, spender: launch.pads[0]!.adapter, amount: '5' },
     ],
-    transactions: [tx('approval', TRUSTED.usdg, approval), tx('approval', TRUSTED.weth, approveData(launch.pads[0]!.adapter, 5n)), tx('swap', launch.coordinator, executeData())],
+    transactions: [tx('approval', TRUSTED.usdg, approval), tx('approval', LAUNCH, approveData(launch.pads[0]!.adapter, 5n)), tx('swap', launch.coordinator, executeData({ tokenOut: LAUNCH }))],
   }
   const steps = execution.transactions.map((t) => step(t.kind, t.to, t.data))
   const q = quote(ready(steps), { execution })
-  const launchAsk = { ...swapAsk, roundTripCap: 10n }
+  const launchAsk = { ...swapAsk, tokenOut: LAUNCH, roundTripCap: 10n }
   assert.equal(checkSwapSteps(q, launchAsk, TRUSTED).steps.length, 3)
   // the round trip's allowance (the output to the pad's adapter) is held under the cap the swap names, and refused with none
-  assert.throws(() => checkSwapSteps(q, swapAsk, TRUSTED), /round-trip allowance/)
-  assert.throws(() => checkSwapSteps(q, { ...swapAsk, roundTripCap: 4n }, TRUSTED), /round-trip allowance/)
+  assert.throws(() => checkSwapSteps(q, { ...swapAsk, tokenOut: LAUNCH }, TRUSTED), /round-trip allowance/)
+  assert.throws(() => checkSwapSteps(q, { ...swapAsk, tokenOut: LAUNCH, roundTripCap: 4n }, TRUSTED), /round-trip allowance/)
   // the terminal sent somewhere else than the pinned coordinator
-  const moved = { ...execution, transactions: [...execution.transactions.slice(0, 2), tx('swap', ATTACKER, executeData())] }
+  const moved = { ...execution, transactions: [...execution.transactions.slice(0, 2), tx('swap', ATTACKER, executeData({ tokenOut: LAUNCH }))] }
   assert.throws(() => checkSwapSteps(quote(ready(moved.transactions.map((t) => step(t.kind, t.to, t.data))), { execution: moved }), launchAsk, TRUSTED), /terminal execution target/)
   // a step that is not its envelope transaction
-  const swapped = [...steps.slice(0, 2), step('swap', launch.coordinator, executeData({ recipient: ATTACKER }))]
+  const swapped = [...steps.slice(0, 2), step('swap', launch.coordinator, executeData({ tokenOut: LAUNCH, recipient: ATTACKER }))]
   assert.throws(() => checkSwapSteps(quote(ready(swapped), { execution }), launchAsk, TRUSTED), /not its envelope transaction/)
   // an envelope whose own terminal pays someone else passes the envelope check and fails the router call's
-  const paysOther = { ...execution, transactions: [...execution.transactions.slice(0, 2), tx('swap', launch.coordinator, executeData({ recipient: ATTACKER }))] }
+  const paysOther = { ...execution, transactions: [...execution.transactions.slice(0, 2), tx('swap', launch.coordinator, executeData({ tokenOut: LAUNCH, recipient: ATTACKER }))] }
   assert.throws(() => checkSwapSteps(quote(ready(paysOther.transactions.map((t) => step(t.kind, t.to, t.data))), { execution: paysOther }), launchAsk, TRUSTED), /recipient/)
+})
+
+test("a sale's round trip is its pad's quote token alone, and its cap is in that token's units", async () => {
+  // Hey Research Lab's second note (2026-11-03): with an operator requirement the round trip could be of any token the
+  // wallet holds, and its cap was in the output's raw units whatever token it held
+  const launch = TRUSTED.launch!
+  const tx = (kind: 'approval' | 'authorization' | 'swap', to: Address, data: Hex) => ({ chain: 'robinhood' as const, chainId: 4663 as const, kind, to, data, value: '0' })
+  // a pad whose launches are quoted in a token that is neither side of the swap (STONKBROKER's), so a sale for ether
+  // passes through it
+  const pad = launch.pads.find((p) => p.quoteToken !== TRUSTED.weth && p.quoteToken !== TRUSTED.usdg)!
+  const operatorData = encodeFunctionData({ abi: safeLaunchV2OperatorAbi, functionName: 'setOperator', args: [7n, pad.adapter, true] })
+  const sale = (roundToken: Address, amount: bigint, target: Address = pad.pad) => ({
+    version: 1 as const, taker: ME, recipient: ME, entrypoint: 'launch-coordinator' as const,
+    requirements: [
+      { kind: 'erc20-allowance' as const, token: TRUSTED.usdg, spender: launch.allowanceTarget, amount: '1000000' },
+      { kind: 'protocol-operator' as const, protocol: 'safe-launch-v2', target, launchId: '7', operator: pad.adapter },
+      { kind: 'erc20-allowance' as const, token: roundToken, spender: pad.adapter, amount: String(amount) },
+    ],
+    transactions: [
+      tx('approval', TRUSTED.usdg, approveData(launch.allowanceTarget, 1_000_000n)),
+      tx('authorization', target, operatorData),
+      tx('approval', roundToken, approveData(pad.adapter, amount)),
+      tx('swap', launch.coordinator, executeData()),
+    ],
+  })
+  const run = (execution: ReturnType<typeof sale>, roundTripCap: bigint) =>
+    checkSwapSteps(quote(ready(execution.transactions.map((t) => step(t.kind, t.to, t.data))), { execution }), { ...swapAsk, roundTripCap }, TRUSTED)
+  // the pad's own quote token under the cap passes, over it is refused
+  assert.equal(run(sale(pad.quoteToken, 5n), 10n).steps.length, 4)
+  assert.throws(() => run(sale(pad.quoteToken, 50n), 10n), /round-trip allowance is over the cap/)
+  // any other token is refused whatever the cap: the swap's own output, and a token the wallet merely holds
+  assert.throws(() => run(sale(TRUSTED.weth, 5n), 10n ** 30n), /pad's quote token/)
+  assert.throws(() => run(sale(getAddress('0x' + '55'.repeat(20)), 5n), 10n ** 30n), /pad's quote token/)
+
+  // the cap: a sale through an intermediate quote token is held to twice what the pinned lens says the pad pays it
+  const asked: Array<[Address, Address, bigint]> = []
+  const lensPays = (paid: bigint) => async (lens: Address, p: Address, id: bigint) => { asked.push([lens, p, id]); return paid }
+  const o = { tokenOut: TRUSTED.weth, outputCap: 10n }
+  assert.equal(await launchRoundTripCap(sale(pad.quoteToken, 5n) as never, launch, { ...o, saleQuote: lensPays(300n) }), 600n)
+  assert.deepEqual(asked, [[launch.lens!, pad.pad, 7n]])
+  // a lens that does not answer, or answers nothing, leaves no cap; so does a pad or a lens this SDK does not pin
+  assert.equal(await launchRoundTripCap(sale(pad.quoteToken, 5n) as never, launch, { ...o, saleQuote: async () => { throw new Error('no answer') } }), 0n)
+  assert.equal(await launchRoundTripCap(sale(pad.quoteToken, 5n) as never, launch, { ...o, saleQuote: lensPays(0n) }), 0n)
+  assert.equal(await launchRoundTripCap(sale(pad.quoteToken, 5n, ATTACKER) as never, launch, { ...o, saleQuote: lensPays(300n) }), 0n)
+  assert.equal(await launchRoundTripCap(sale(pad.quoteToken, 5n) as never, { ...launch, lens: null }, { ...o, saleQuote: lensPays(300n) }), 0n)
+  // a sale paid in the swap's own output, and a purchase, are held to the caller's own figure, with no read
+  const wethPad = launch.pads.find((p) => p.quoteToken === TRUSTED.weth)!
+  asked.length = 0
+  assert.equal(await launchRoundTripCap(sale(TRUSTED.weth, 5n, wethPad.pad) as never, launch, { ...o, saleQuote: lensPays(300n) }), 10n)
+  const purchase = { ...sale(TRUSTED.weth, 5n), requirements: sale(TRUSTED.weth, 5n).requirements.filter((r) => r.kind !== 'protocol-operator') }
+  assert.equal(await launchRoundTripCap(purchase as never, launch, { ...o, saleQuote: lensPays(300n) }), 10n)
+  assert.deepEqual(asked, [])
+})
+
+test("the kit pins every launch pad's quote token, and the lens", () => {
+  const launch = TRUSTED.launch!
+  assert.equal(launch.pads.length, 18)
+  for (const p of launch.pads) assert.match(p.quoteToken, /^0x[0-9a-fA-F]{40}$/)
+  assert.equal(launch.lens, getAddress('0x25b5Df581f4b2Ed450203f375ad8A28b17F115B3'))
 })
 
 test("an envelope naming any entrypoint but the two the SDK reads is refused, and every allowance is held to its pinned spender", () => {
   // Hey Research Lab's report (2026-11-03): with entrypoint 'coordinator' the site's check ran no requirement check, and an
   // approval of the input or of any other token to anyone passed
   const launch = TRUSTED.launch!
+  const LAUNCH = getAddress('0x' + '55'.repeat(20))
   const tx = (kind: 'approval' | 'swap', to: Address, data: Hex) => ({ chain: 'robinhood' as const, chainId: 4663 as const, kind, to, data, value: '0' })
   const envelopeWith = (entrypoint: unknown, inputSpender: Address, roundSpender: Address) => ({
     version: 1 as const, taker: ME, recipient: ME, entrypoint: entrypoint as 'launch-coordinator',
     requirements: [
       { kind: 'erc20-allowance' as const, token: TRUSTED.usdg, spender: inputSpender, amount: '1000000' },
-      { kind: 'erc20-allowance' as const, token: TRUSTED.weth, spender: roundSpender, amount: '5' },
+      { kind: 'erc20-allowance' as const, token: LAUNCH, spender: roundSpender, amount: '5' },
     ],
     transactions: [
       tx('approval', TRUSTED.usdg, approveData(inputSpender, 1_000_000n)),
-      tx('approval', TRUSTED.weth, approveData(roundSpender, 5n)),
-      tx('swap', launch.coordinator, executeData()),
+      tx('approval', LAUNCH, approveData(roundSpender, 5n)),
+      tx('swap', launch.coordinator, executeData({ tokenOut: LAUNCH })),
     ],
   })
-  const launchAsk = { ...swapAsk, roundTripCap: 10n }
+  const launchAsk = { ...swapAsk, tokenOut: LAUNCH, roundTripCap: 10n }
   const run = (execution: ReturnType<typeof envelopeWith>) =>
     checkSwapSteps(quote(ready(execution.transactions.map((t) => step(t.kind, t.to, t.data))), { execution }), launchAsk, TRUSTED)
   for (const entrypoint of ['coordinator', '', 'Launch-Coordinator', 'launch-coordinator ', 7, null]) {

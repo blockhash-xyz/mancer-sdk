@@ -1,6 +1,6 @@
 {
   "name": "@blockhash/mancer-mcp",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Mancer's MCP server: an AI agent reads Mancer and builds swaps, sends, orders and Books acts as unsigned transactions its own wallet signs. It signs nothing and holds no key. Over stdio, or over Streamable HTTP as Mancer runs it at mcp.mancer.xyz",
   "license": "MIT",
   "author": "Blockhash",
@@ -64,7 +64,7 @@
     "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {
-    "@blockhash/mancer-sdk": "0.2.2",
+    "@blockhash/mancer-sdk": "0.2.3",
     "@modelcontextprotocol/sdk": "1.32.2",
     "viem": "2.55.10",
     "zod": "3.25.76"

@@ -2919,7 +2919,7 @@ paths:
                 type: object
                 required: [token, created, account]
                 properties:
-                  token: { type: string, description: "The session token, an HS256 JWT. It lasts seven days from its `iat` (read `exp`), is never renewed, and its `iat` may sit a second ahead of your clock." }
+                  token: { type: string, description: "The session token, an HS256 JWT. It lasts seven days from its `iat` (read `exp`), `POST /v1/me/sessions/refresh` renews it, and its `iat` may sit a second ahead of your clock." }
                   created: { type: boolean, description: "Whether this sign-in made the account." }
                   account: { $ref: "#/components/schemas/Address", description: "The account the wallet signed in to: its own, or the one that holds it as a linked wallet." }
         "400": { description: "`bad-body`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
@@ -2980,6 +2980,33 @@ paths:
         "403": { description: "`primary-wallet-only`: the account scope takes a session of the account's primary wallet, and a linked wallet ends its own with the wallet scope. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "429": { $ref: "#/components/responses/RateLimited" }
         "503": { description: "`profiles-unavailable` or `auth-unavailable`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /v1/me/sessions/refresh:
+    post:
+      tags: [Account]
+      summary: "Renew a session"
+      operationId: refreshSession
+      security:
+        - { bearer: [] }
+      description: "Returns a fresh seven-day session for the caller's wallet, issued now, carrying the time of the sign-in it came from. Renewals run 90 days from that sign-in, then the wallet signs in again. The old session is not ended. A session that was ended, or one from before its wallet joined or left an account, is refused. A session's alone: a wallet key is refused. Pays `session-renew` (one a minute, burst 5)."
+      responses:
+        "200":
+          description: A fresh session.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [token, wallet, signedInAt, issuedAt, expiresAt, renewableUntil]
+                properties:
+                  token: { type: string, description: "The new session token." }
+                  wallet: { type: string, description: "The wallet the session is for, lowercase." }
+                  signedInAt: { type: integer, description: "Unix seconds of the sign-in the session came from." }
+                  issuedAt: { type: integer, description: "Unix seconds." }
+                  expiresAt: { type: integer, description: "Unix seconds, seven days after `issuedAt`." }
+                  renewableUntil: { type: integer, description: "Unix seconds: 90 days after `signedInAt`, the last moment a renewal is answered." }
+        "401": { $ref: "#/components/responses/SessionRefused" }
+        "403": { description: "`key-session-only`: a wallet key cannot renew itself into a session. `session-renew-limit`: the sign-in is more than 90 days old, and the session runs out on its own. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { description: "`session-renew-off`: this server does not renew sessions yet. `profiles-unavailable` or `auth-unavailable`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /v1/me/wallets/link/nonce:
     post:
       tags: [Account]
@@ -6493,7 +6520,7 @@ components:
         bucket:
           type: string
           description: "On a 429 `rate-limited`, the bucket that refused."
-          enum: [key, key-account, session, ip, ip-ceiling, art, estimate, build, build-ceiling, auth, discover, discover-ceiling, account-write, follow-write, user-search, user-lookup, user-follows, username-check, steps]
+          enum: [key, key-account, session, ip, ip-ceiling, art, estimate, build, build-ceiling, auth, discover, discover-ceiling, account-write, follow-write, session-renew, user-search, user-lookup, user-follows, username-check, steps]
         detail: { type: object, additionalProperties: true, description: "What the refusal names, by code." }
     ErrorCode:
       type: string
@@ -6769,6 +6796,8 @@ components:
         - sell-exceeds-balance
         - sell-exceeds-curve
         - sells-disabled
+        - session-renew-limit
+        - session-renew-off
         - session-required
         - session-revoked
         - signature-mismatch
@@ -6950,7 +6979,7 @@ components:
       properties:
         caller:
           type: object
-          description: "Who the API takes the request for: `anonymous` (by its address), `session` (its wallet, account, `issuedAt` and `expiresAt`) or `key` (its `name` and `rateClass`, and a wallet key's `actsAs`)."
+          description: "Who the API takes the request for: `anonymous` (by its address), `session` (its wallet, account, `issuedAt`, `signedInAt` and `expiresAt`) or `key` (its `name` and `rateClass`, and a wallet key's `actsAs`)."
           required: [kind]
           properties:
             kind: { type: string, enum: [anonymous, session, key] }
@@ -6958,7 +6987,8 @@ components:
             sessionRevoked: { type: boolean, description: "Anonymous: the request carried a session its account ended." }
             wallet: { $ref: "#/components/schemas/Address" }
             account: { type: [string, "null"] }
-            issuedAt: { type: [integer, "null"] }
+            issuedAt: { type: [integer, "null"], description: "Session: when this token was issued (Unix seconds)." }
+            signedInAt: { type: [integer, "null"], description: "Session: when the sign-in it came from was (Unix seconds); a renewed session keeps its sign-in's." }
             expiresAt: { type: integer }
             name: { type: string }
             rateClass: { type: string, enum: [standard, high] }

@@ -1,10 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { getAddress, keccak256, type Address, type Hex, type PublicClient, type WalletClient } from 'viem'
+import { encodeFunctionData, getAddress, keccak256, type Address, type Hex, type PublicClient, type WalletClient } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 import { BOOK_DEPLOYMENTS, type BookDeployment } from '../src/kit/books/deployments'
 import { bookCallData, confirmTradeCall } from '../src/kit/books/calls'
+import { safeLaunchV2OperatorAbi } from '../src/kit/abi'
 import { Mancer, MancerCheckError, SDK_VERSION, checkSwapSteps } from '../src/index'
 import type { Quote, ReadySteps } from '../src/generated/openapi'
 import { NOW, SIM_OK, TRUSTED, approveData, codeAt, contractsAnswer, executeData, fakeChain, mockApi } from './helpers'
@@ -114,9 +115,11 @@ class LaunchStandIn extends Mancer {
 
 test("a launch route's round-trip allowance is sized by the bot's own reference, never by the quote's word", async () => {
   const launch = TRUSTED.launch!
+  // a purchase of a launch's token, which the pad's adapter's own pad launched (its launch id read on the bot's node)
+  const LAUNCH = getAddress('0x' + '55'.repeat(20))
   const tx = (kind: 'approval' | 'swap', to: Address, data: Hex) => ({ chain: 'robinhood' as const, chainId: 4663 as const, kind, to, data, value: '0' })
   const envelope = (roundTrip: bigint) => {
-    const transactions = [tx('approval', TRUSTED.usdg, approveData(launch.allowanceTarget, 1_000_000n)), tx('approval', TRUSTED.weth, approveData(launch.pads[0]!.adapter, roundTrip)), tx('swap', launch.coordinator, executeData({ feeBps: 2, minAmountOut: 995n }))]
+    const transactions = [tx('approval', TRUSTED.usdg, approveData(launch.allowanceTarget, 1_000_000n)), tx('approval', LAUNCH, approveData(launch.pads[0]!.adapter, roundTrip)), tx('swap', launch.coordinator, executeData({ tokenOut: LAUNCH, feeBps: 2, minAmountOut: 995n }))]
     return {
       quote: {
         amountOut: '100000', quotedAmountOut: '100000', minOut: '995', fee: { bps: 2, side: 'input' }, latencyMs: 1, cached: false,
@@ -125,7 +128,7 @@ test("a launch route's round-trip allowance is sized by the bot's own reference,
           version: 1, taker: account.address, recipient: account.address, entrypoint: 'launch-coordinator',
           requirements: [
             { kind: 'erc20-allowance', token: TRUSTED.usdg, spender: launch.allowanceTarget, amount: '1000000' },
-            { kind: 'erc20-allowance', token: TRUSTED.weth, spender: launch.pads[0]!.adapter, amount: roundTrip.toString() },
+            { kind: 'erc20-allowance', token: LAUNCH, spender: launch.pads[0]!.adapter, amount: roundTrip.toString() },
           ],
           transactions,
         },
@@ -136,12 +139,70 @@ test("a launch route's round-trip allowance is sized by the bot's own reference,
   let roundTrip = 1_500n
   const api = await mockApi({ 'GET /v1/contracts': () => ({ body: contractsAnswer() }), 'GET /v1/quote': () => ({ body: envelope(roundTrip) }) })
   try {
-    const m = new LaunchStandIn({ baseUrl: api.url, account, session, trusted: TRUSTED, publicClient: fakeChain() })
-    const ask = { tokenIn: TRUSTED.usdg, tokenOut: TRUSTED.weth, amountIn: 1_000_000n, reference: async () => 1_000n, maxSlippageBps: 100 }
+    const m = new LaunchStandIn({ baseUrl: api.url, account, session, trusted: TRUSTED, publicClient: fakeChain({ launchIdOfToken: ([token]) => (token === LAUNCH ? 5n : 0n) }) })
+    const ask = { tokenIn: TRUSTED.usdg, tokenOut: LAUNCH, amountIn: 1_000_000n, reference: async () => 1_000n, maxSlippageBps: 100 }
     // the quote names 100,000 out; the bot's reference names 1,000, so the round trip may reach 2,000
     assert.equal((await m.buildSwap(ask)).minOut, 990n)
     roundTrip = 2_001n
     await assert.rejects(m.buildSwap(ask), (e) => e instanceof MancerCheckError && /round-trip allowance is over the cap/.test(e.reason))
+  } finally {
+    await api.close()
+  }
+})
+
+test("a launch sale is held to the pad's word on the bot's node: its own launch, and a cap in the pad's quote token", async () => {
+  // the second reading of Hey Research Lab's second note (2026-11-04): the operator's launch id is the answer's, so it
+  // is proven the launch of the token sold before the lens is read for it
+  const launch = TRUSTED.launch!
+  const LAUNCH = getAddress('0x' + '55'.repeat(20))
+  // a pad quoted in a token that is neither side of the swap: a sale of its launch for ether passes through it
+  const pad = launch.pads.find((p) => p.quoteToken !== TRUSTED.weth && p.quoteToken !== TRUSTED.usdg)!
+  const tx = (kind: 'approval' | 'authorization' | 'swap', to: Address, data: Hex) => ({ chain: 'robinhood' as const, chainId: 4663 as const, kind, to, data, value: '0' })
+  const envelope = (launchId: string, roundTrip: bigint) => {
+    const transactions = [
+      tx('approval', LAUNCH, approveData(launch.allowanceTarget, 1_000_000n)),
+      tx('authorization', pad.pad, encodeFunctionData({ abi: safeLaunchV2OperatorAbi, functionName: 'setOperator', args: [BigInt(launchId), pad.adapter, true] })),
+      tx('approval', pad.quoteToken, approveData(pad.adapter, roundTrip)),
+      tx('swap', launch.coordinator, executeData({ tokenIn: LAUNCH, tokenOut: TRUSTED.weth, feeBps: 2, minAmountOut: 995n })),
+    ]
+    return {
+      quote: {
+        amountOut: '100000', quotedAmountOut: '100000', minOut: '995', fee: { bps: 2, side: 'input' }, latencyMs: 1, cached: false,
+        tx: { to: launch.coordinator, data: transactions[3]!.data, value: '0', approval: null },
+        execution: {
+          version: 1, taker: account.address, recipient: account.address, entrypoint: 'launch-coordinator',
+          requirements: [
+            { kind: 'erc20-allowance', token: LAUNCH, spender: launch.allowanceTarget, amount: '1000000' },
+            { kind: 'protocol-operator', protocol: 'safe-launch-v2', target: pad.pad, launchId, operator: pad.adapter },
+            { kind: 'erc20-allowance', token: pad.quoteToken, spender: pad.adapter, amount: roundTrip.toString() },
+          ],
+          transactions,
+        },
+        ready: { chainId: 4663, wallet: account.address.toLowerCase(), simulation: SIM_OK, readAfter: null, steps: transactions.map((t) => ({ kind: t.kind, to: t.to.toLowerCase(), data: t.data, value: '0', gas: '100000', why: '' })) },
+      },
+    }
+  }
+  let answer = envelope('7', 500n)
+  const lensAsked: unknown[][] = []
+  const chain = fakeChain({
+    // the pad launched LAUNCH as its launch 7, and launched no other token here
+    launchIdOfToken: ([token]) => (token === LAUNCH ? 7n : 0n),
+    quoteSell: (args) => { lensAsked.push([...args]); return [300n, 0n] },
+  })
+  const api = await mockApi({ 'GET /v1/contracts': () => ({ body: contractsAnswer() }), 'GET /v1/quote': () => ({ body: answer }) })
+  try {
+    const m = new LaunchStandIn({ baseUrl: api.url, account, session, trusted: TRUSTED, publicClient: chain })
+    const ask = { tokenIn: LAUNCH, tokenOut: TRUSTED.weth, amountIn: 1_000_000n, reference: async () => 1_000n, maxSlippageBps: 100 }
+    // the pad pays this sale 300 of its quote token, so the round trip may reach 600 of it, the lens read for launch 7
+    assert.equal((await m.buildSwap(ask)).checked.steps.length, 4)
+    assert.deepEqual(lensAsked, [[pad.pad, 7n, account.address, 1_000_000n]])
+    answer = envelope('7', 601n)
+    await assert.rejects(m.buildSwap(ask), (e) => e instanceof MancerCheckError && /round-trip allowance is over the cap/.test(e.reason))
+    // an operator for another launch on the same pad (one where the wallet might hold more) is refused before the lens is read
+    lensAsked.length = 0
+    answer = envelope('8', 500n)
+    await assert.rejects(m.buildSwap(ask), (e) => e instanceof MancerCheckError && /pad on your node: the permission is for another launch/.test(e.reason))
+    assert.deepEqual(lensAsked, [])
   } finally {
     await api.close()
   }

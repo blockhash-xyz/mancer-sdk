@@ -2,6 +2,7 @@ import {
   createPublicClient,
   createWalletClient,
   http,
+  parseAbi,
   type Account,
   type Address,
   type Hex,
@@ -14,6 +15,9 @@ import { contractsMismatch, pinnedContracts, readCodeHashes, type TrustedContrac
 import { MancerCheckError, MancerError, SDK_ERROR_CODES, readRateLimit, type RateLimitInfo } from './errors'
 import { OPERATIONS, type Contracts, type OperationId, type Operations } from './generated/openapi'
 import { BOOK_DEPLOYMENTS, launchAdapterDeployment, robinhoodChain, type BookDeployment } from './shared'
+
+/** A Smart Launch pad's quote token (constructor state, read back beside its code hash). */
+const PAD_QUOTE_ABI = parseAbi(['function quote() view returns (address)'])
 
 /** Mancer's API. */
 export const DEFAULT_BASE_URL = 'https://api.mancer.xyz'
@@ -442,11 +446,19 @@ export class MancerClient {
     if (!launch || !pinned?.coordinator || !pinned.coordinatorAllowanceTarget) throw new MancerCheckError('contracts', 'this SDK pins no launch stack for the router it trusts')
     if (!this.#launchStack) {
       this.#launchStack = (async () => {
-        const pins = [pinned.coordinator!, pinned.coordinatorAllowanceTarget!, ...pinned.safeLaunchV2Pads.flatMap((p) => [p.pad, p.adapter]), ...(pinned.ponsV2 ? [pinned.ponsV2.factory, pinned.ponsV2.adapter] : [])]
+        const pins = [pinned.coordinator!, pinned.coordinatorAllowanceTarget!, ...pinned.safeLaunchV2Pads.flatMap((p) => [p.pad, p.adapter]), ...(pinned.ponsV2 ? [pinned.ponsV2.factory, pinned.ponsV2.adapter] : []), ...(pinned.safeLaunchLens ? [pinned.safeLaunchLens] : [])]
         const read = await readCodeHashes(this.publicClient, pins.map((p) => p.address))
         for (const p of pins) {
           if ((read[p.address.toLowerCase()] ?? '').toLowerCase() !== p.runtimeCodeHash.toLowerCase()) throw new MancerCheckError('contracts', `the code at ${p.address} on your node is not the launch stack's reviewed build`)
         }
+        // each pad's quote token is constructor state in the code just read, and the pad says it too: a sale's round trip
+        // is held to it (launch-execution.ts), so the kit's word for it is read back on your own node once
+        // (a pad the kit names no quote token for is no pinned pad of TrustedContracts, and is not read)
+        const quoted = pinned.safeLaunchV2Pads.filter((p) => !!p.quoteToken)
+        const quotes = await Promise.all(quoted.map((p) => this.publicClient.readContract({ address: p.pad.address, abi: PAD_QUOTE_ABI, functionName: 'quote' })))
+        quoted.forEach((p, i) => {
+          if (quotes[i]!.toLowerCase() !== p.quoteToken.toLowerCase()) throw new MancerCheckError('contracts', `the pad at ${p.pad.address} on your node is quoted in another token than this SDK pins`)
+        })
       })()
       this.#launchStack.catch(() => {
         this.#launchStack = null

@@ -15,6 +15,11 @@ export interface SafeLaunchPadDeployment {
   adapter: CodePinnedAddress
 }
 
+export interface SafeLaunchPadBinding extends SafeLaunchPadDeployment {
+
+  quoteToken: Address
+}
+
 export interface LaunchAdapterDeployment {
   generation: 'v3'
 
@@ -27,7 +32,9 @@ export interface LaunchAdapterDeployment {
     factory: CodePinnedAddress
     adapter: CodePinnedAddress
   }
-  safeLaunchV2Pads: readonly SafeLaunchPadDeployment[]
+  safeLaunchV2Pads: readonly SafeLaunchPadBinding[]
+
+  safeLaunchLens?: CodePinnedAddress
 }
 
 export const PONS_V2_ADAPTER_SELECTORS = [
@@ -41,7 +48,13 @@ export const SAFE_LAUNCH_V2_ADAPTER_SELECTORS = [
 ] as const
 
 export const MANCER_LAUNCH_ADAPTER_V2_ARCHIVE: Readonly<
-  Record<number, Omit<LaunchAdapterDeployment, 'generation' | 'router' | 'orders'> | undefined>
+  Record<
+    number,
+    | (Omit<LaunchAdapterDeployment, 'generation' | 'router' | 'orders' | 'safeLaunchV2Pads' | 'safeLaunchLens'> & {
+        safeLaunchV2Pads: readonly SafeLaunchPadDeployment[]
+      })
+    | undefined
+  >
 > = {
   4663: {
     coordinator: {
@@ -271,6 +284,27 @@ const MANCER_LAUNCH_V3_SAFE_LAUNCH_ADAPTERS = [
   { address: '0x1f86F85FCF2473af77FdA4781263DbF155A5c9A7', runtimeCodeHash: '0xc87fbfd7bb22075352dd85d53e02583e85c10913e193837f0b73dba8274b3502' },
 ] as const satisfies readonly CodePinnedAddress[]
 
+const SAFE_LAUNCH_V2_PAD_QUOTE_TOKENS: Readonly<Record<string, Address>> = {
+  '0xfcd61b25bbf3abd6cf0070d6328e351cc30eec9f': '0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73',
+  '0x8f6782c5aa37804d08a9b7bf3984ff3245fd6cd4': '0xe934e36A439C94017B64a3FecE66AF12099aBF50',
+  '0xd4f20033586977a2511f4a2db4af7c79a340d70a': '0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168',
+  '0x4b9dcd6ccfaef0f6d23065dd78e79d5e20ec8cfd': '0x1b0E319c6A659F002271B69dB8A7df2F911c153E',
+  '0xee96d955d5634813374ece4c74f2c0ff71b1f9fb': '0xd0601CE157Db5bdC3162BbaC2a2C8aF5320D9EEC',
+  '0xb0453a81cbf963903409fff18ad92941e1c7a864': '0xaF3D76f1834A1d425780943C99Ea8A608f8a93f9',
+  '0x0c3b4eded41696eff0ed70841f132b519d81c947': '0x4a0E65A3EcceC6dBe60AE065F2e7bb85Fae35eEa',
+  '0xdb3c81c841ff88db6cdfbddb0ee049d162a6053b': '0xa30FA36Db767ad9eD3f7a60fC79526fB4d56D344',
+  '0x472a1ab6aeb77e3479193fbe83b718f9bf5f8604': '0x9715e0a0a5f60dCa2A3F69d81Fb7f975De5870Ed',
+  '0x5bceefba6fdf437a7388adc5c9056c827baca3b3': '0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73',
+  '0x406fd0b957bb8cf1dd57c78540d009578e971131': '0xe934e36A439C94017B64a3FecE66AF12099aBF50',
+  '0xf0a06ac7bbb0cc3049b68c257c3ee27ccea40eea': '0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168',
+  '0x5b21f8a5ef81586627b4725844ad447325d0992b': '0x1b0E319c6A659F002271B69dB8A7df2F911c153E',
+  '0xdf03953dca8db733345278a0c5fd2e81fa2a9b54': '0xd0601CE157Db5bdC3162BbaC2a2C8aF5320D9EEC',
+  '0xc522dfae0d1a140257702392b665183a6de7657f': '0xaF3D76f1834A1d425780943C99Ea8A608f8a93f9',
+  '0xd82da1d8ef59959b170b59147283ab1f2f1ca86a': '0x4a0E65A3EcceC6dBe60AE065F2e7bb85Fae35eEa',
+  '0x644b19512052a1b6d38d7b16c6c3fb1d3f7270d2': '0xa30FA36Db767ad9eD3f7a60fC79526fB4d56D344',
+  '0x2bd7f90cca4660da82aa693cf352ddb6275c76da': '0x9715e0a0a5f60dCa2A3F69d81Fb7f975De5870Ed',
+}
+
 export const MANCER_LAUNCH_ADAPTER_DEPLOYMENTS: Readonly<
   Record<number, LaunchAdapterDeployment | undefined>
 > = {
@@ -305,7 +339,13 @@ export const MANCER_LAUNCH_ADAPTER_DEPLOYMENTS: Readonly<
     safeLaunchV2Pads: MANCER_LAUNCH_ADAPTER_V2_ARCHIVE[4663]!.safeLaunchV2Pads.map((deployment, index) => ({
       pad: deployment.pad,
       adapter: MANCER_LAUNCH_V3_SAFE_LAUNCH_ADAPTERS[index]!,
+
+      quoteToken: SAFE_LAUNCH_V2_PAD_QUOTE_TOKENS[deployment.pad.address.toLowerCase()]!,
     })),
+    safeLaunchLens: {
+      address: '0x25b5Df581f4b2Ed450203f375ad8A28b17F115B3',
+      runtimeCodeHash: '0x9b8c04870e8ff369de506ddb306d3127cf41cd90b68c940521b0fff8707d02b3',
+    },
   },
   46630: undefined,
 }

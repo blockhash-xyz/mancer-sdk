@@ -52,13 +52,30 @@ export interface ExecutionExpectation {
 
   coordinator?: Address
   coordinatorAllowanceTarget?: Address
-  safeLaunchPads?: readonly { pad: Address; adapter: Address }[]
+
+  amountIn?: bigint
+
+  safeLaunchPads?: readonly SafeLaunchPadExpectation[]
+}
+
+export interface SafeLaunchPadExpectation {
+  pad: Address
+  adapter: Address
+  quoteToken: Address
 }
 
 const UNBOUNDED_ALLOWANCE = 1n << 128n
 
 function same(a: string, b: string): boolean {
-  return typeof a === 'string' && typeof b === 'string' && a.toLowerCase() === b.toLowerCase()
+  return typeof a === 'string' && typeof b === 'string' && a !== '' && a.toLowerCase() === b.toLowerCase()
+}
+
+function requirementsWellFormed(requirements: readonly unknown[]): boolean {
+  return requirements.every((requirement) => {
+    if (!requirement || typeof requirement !== 'object') return false
+    const kind = (requirement as { kind?: unknown }).kind
+    return kind === 'erc20-allowance' || kind === 'protocol-operator'
+  })
 }
 
 function asUint(value: string): bigint | null {
@@ -122,6 +139,8 @@ export function executionEnvelopeMismatch(
   if (!Array.isArray(execution.requirements) || !Array.isArray(execution.transactions)) {
     return 'execution requirements are malformed'
   }
+  if (!requirementsWellFormed(execution.requirements)) return 'execution requirements are malformed'
+  if (execution.transactions.some((tx) => !tx || typeof tx !== 'object')) return 'execution transactions are malformed'
   if (execution.transactions.length === 0) return 'execution has no transactions'
   if (execution.transactions.some((tx) => tx.chainId !== expected.chainId)) {
     return 'execution is for a different chain'
@@ -171,6 +190,7 @@ export function executionEnvelopeMismatch(
     let outputRoundTripCount = 0
     let outputRoundTripAdapter: Address | undefined
     let outputRoundTripToken: Address | undefined
+    let outputRoundTripPad: SafeLaunchPadExpectation | undefined
     const operatorAdapters: Address[] = []
     for (const requirement of execution.requirements) {
       if (requirement.kind === 'erc20-allowance') {
@@ -178,13 +198,16 @@ export function executionEnvelopeMismatch(
           if (!same(requirement.spender, expected.coordinatorAllowanceTarget)) {
             return 'input allowance spender is not the coordinator allowance target'
           }
-        } else {
-          if (!pads.some((entry) => same(entry.adapter, requirement.spender))) {
-            return 'output round-trip spender is not a configured pad adapter'
+          if (expected.amountIn !== undefined && asUint(requirement.amount) !== expected.amountIn) {
+            return 'input allowance is not exactly the amount the swap spends'
           }
+        } else {
+          const entry = pads.find((candidate) => same(candidate.adapter, requirement.spender))
+          if (!entry) return 'output round-trip spender is not a configured pad adapter'
           outputRoundTripCount++
           outputRoundTripAdapter = requirement.spender
           outputRoundTripToken = requirement.token
+          outputRoundTripPad = entry
         }
       } else {
         if (
@@ -199,12 +222,21 @@ export function executionEnvelopeMismatch(
       }
     }
     if (outputRoundTripCount !== 1) return 'execution does not contain one output round-trip allowance'
+    if (operatorAdapters.length > 1) return 'execution names more than one operator requirement'
     if (operatorAdapters.some((operator) => !outputRoundTripAdapter || !same(operator, outputRoundTripAdapter))) {
       return 'operator and output round-trip requirements name different adapters'
     }
 
     if (operatorAdapters.length === 0 && outputRoundTripToken && !same(outputRoundTripToken, expected.tokenOut)) {
       return 'output round-trip allowance is not for the bought launch token'
+    }
+
+    if (operatorAdapters.length === 0 && pads.some((entry) => same(entry.quoteToken, expected.tokenOut))) {
+      return "a purchase's round trip names a pad's quote token, which no launch is"
+    }
+    const padQuote = outputRoundTripPad?.quoteToken
+    if (operatorAdapters.length > 0 && !(outputRoundTripToken && padQuote && same(outputRoundTripToken, padQuote))) {
+      return "a sale's round-trip allowance is not for its pad's quote token"
     }
   }
 
@@ -219,7 +251,7 @@ export function executionEnvelopeMismatch(
 
 export function orderAuthorizationMismatch(
   authorization: LaunchOrderAuthorization,
-  expected: Pick<ExecutionExpectation, 'chainId' | 'safeLaunchPads'>,
+  expected: Pick<ExecutionExpectation, 'chainId' | 'safeLaunchPads' | 'tokenOut'>,
 ): string | null {
   if (authorization.protocol !== 'safe-launch-v2') return 'unsupported launch authorization protocol'
   const pads = expected.safeLaunchPads ?? []
@@ -231,9 +263,29 @@ export function orderAuthorizationMismatch(
   if (!Array.isArray(authorization.requirements) || !Array.isArray(authorization.transactions)) {
     return 'launch authorization is malformed'
   }
+  if (!requirementsWellFormed(authorization.requirements)) return 'launch authorization is malformed'
+  if (authorization.transactions.some((tx) => !tx || typeof tx !== 'object')) return 'launch authorization is malformed'
+
+  const operators = authorization.requirements.filter((requirement) => requirement.kind === 'protocol-operator')
+  if (operators.length > 1) return 'the authorization names more than one operator requirement'
+  if (authorization.requirements.filter((requirement) => requirement.kind === 'erc20-allowance').length !== 1) {
+    return 'the authorization does not name one round-trip allowance'
+  }
+  const sells = operators.length === 1
   for (const requirement of authorization.requirements) {
     if (requirement.kind === 'erc20-allowance') {
       if (!same(requirement.spender, configured.adapter)) return 'round-trip spender is not the pad adapter'
+      const amount = asUint(requirement.amount)
+      if (amount === null || amount >= UNBOUNDED_ALLOWANCE) return 'an allowance requirement is unbounded'
+      if (sells && !(configured.quoteToken && same(requirement.token, configured.quoteToken))) {
+        return "a sale's round-trip allowance is not for its pad's quote token"
+      }
+      if (!sells && !same(requirement.token, expected.tokenOut)) {
+        return "a purchase's round-trip allowance is not for the bought launch token"
+      }
+      if (!sells && configured.quoteToken && same(requirement.token, configured.quoteToken)) {
+        return "a purchase's round trip names the pad's quote token, which no launch is"
+      }
     } else if (
       requirement.protocol !== 'safe-launch-v2' ||
       !same(requirement.target, configured.pad) ||
@@ -252,6 +304,63 @@ export function orderAuthorizationMismatch(
     cursor = index + 1
   }
   return null
+}
+
+export const safeLaunchPadLaunchIdAbi = [
+  {
+    type: 'function',
+    name: 'launchIdOfToken',
+    stateMutability: 'view',
+    inputs: [{ name: 'token', type: 'address' }],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+] as const
+
+export interface LaunchPadReads {
+
+  launchIdOfToken: (pad: Address, token: Address) => Promise<bigint>
+}
+
+async function launchOfToken(reads: LaunchPadReads, pad: Address, token: Address, launchId: bigint | null): Promise<string | null> {
+  const id = await reads.launchIdOfToken(pad, token)
+  if (id === 0n) return 'the pad did not launch the token this trade sells or buys'
+  if (launchId !== null && id !== launchId) return 'the permission is for another launch than the token this trade sells'
+  return null
+}
+
+export async function launchRouteChainMismatch(
+  execution: IntegratorExecution,
+  expected: ExecutionExpectation,
+  reads: LaunchPadReads,
+): Promise<string | null> {
+  if (execution.entrypoint !== 'launch-coordinator') return null
+  const operator = execution.requirements.find((requirement) => requirement.kind === 'protocol-operator')
+  const roundTrip = execution.requirements.find(
+    (requirement) => requirement.kind === 'erc20-allowance' && !same(requirement.token, expected.tokenIn),
+  )
+  try {
+    if (operator && operator.kind === 'protocol-operator') {
+      return await launchOfToken(reads, operator.target, expected.tokenIn, asUint(operator.launchId) ?? -1n)
+    }
+    const entry = roundTrip ? (expected.safeLaunchPads ?? []).find((candidate) => same(candidate.adapter, roundTrip.kind === 'erc20-allowance' ? roundTrip.spender : '')) : undefined
+    if (!entry) return 'output round-trip spender is not a configured pad adapter'
+    return await launchOfToken(reads, entry.pad, expected.tokenOut, null)
+  } catch {
+    return 'the launch pad did not answer'
+  }
+}
+
+export async function orderAuthorizationChainMismatch(
+  authorization: LaunchOrderAuthorization,
+  expected: Pick<ExecutionExpectation, 'tokenIn' | 'tokenOut'>,
+  reads: LaunchPadReads,
+): Promise<string | null> {
+  const sells = authorization.requirements.some((requirement) => requirement.kind === 'protocol-operator')
+  try {
+    return await launchOfToken(reads, authorization.origin, sells ? expected.tokenIn : expected.tokenOut, asUint(authorization.launchId) ?? -1n)
+  } catch {
+    return 'the launch pad did not answer'
+  }
 }
 
 export const LAUNCH_UNAVAILABLE_MESSAGES: Readonly<Record<string, string>> = {

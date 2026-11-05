@@ -16,7 +16,14 @@ export interface TrustedContracts {
   weth: Address
   usdg: Address
   /** The account-bound launch stack bound to this router and orders contract; null where the chain has none. */
-  launch: { coordinator: Address; allowanceTarget: Address; pads: { pad: Address; adapter: Address }[] } | null
+  launch: {
+    coordinator: Address
+    allowanceTarget: Address
+    /** Each pinned pad, its adapter, and the token its launches are quoted in (constructor state in the pad's code). */
+    pads: { pad: Address; adapter: Address; quoteToken: Address }[]
+    /** The Smart Launch lens a sale's round trip is sized by (`quoteSell`), in the pad's quote token. */
+    lens: Address | null
+  } | null
   /** The runtime code hashes the kit pins (lowercase address to hash): the router, the orders contract, the launch stack. */
   codeHashes: Record<string, Hex>
 }
@@ -50,7 +57,9 @@ export function pinnedContracts(chainId = 4663): TrustedContracts | null {
       ? {
           coordinator: getAddress(bound.coordinator.address),
           allowanceTarget: getAddress(bound.coordinatorAllowanceTarget.address),
-          pads: bound.safeLaunchV2Pads.map((p) => ({ pad: getAddress(p.pad.address), adapter: getAddress(p.adapter.address) })),
+          // a pad the kit names no quote token for is left out: its adapter is then no pinned spender, and nothing of it is signed
+          pads: bound.safeLaunchV2Pads.filter((p) => !!p.quoteToken).map((p) => ({ pad: getAddress(p.pad.address), adapter: getAddress(p.adapter.address), quoteToken: getAddress(p.quoteToken) })),
+          lens: bound.safeLaunchLens ? getAddress(bound.safeLaunchLens.address) : null,
         }
       : null,
     codeHashes,

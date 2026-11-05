@@ -2,7 +2,7 @@ import { decodeEventLog, decodeFunctionResult, erc20Abi, getAddress, hashTypedDa
 import { bookActCalls, bookBasePairOf, checkVaultQuote, raiseCalls, readBookRedemption, readChainBook, readVaultPending, settlementCalls, verifyBookDeployment, type BookAction, type BookActArgs, type BookRedemption, type ChainBook } from './books'
 import { floorBesidePool, floorKind, holdSignedFloor, namedFloor, wethUsdgPoolOut, type FloorRule, type ReferenceFn } from './floor'
 import { SDK_VERSION } from './version'
-import { routerAllowlistDrift, type AllowlistDrift } from './shared'
+import { executionEnvelopeMismatch, launchRouteChainMismatch, routerAllowlistDrift, safeLaunchPadLaunchIdAbi, type AllowlistDrift } from './shared'
 import {
   checkBookSteps,
   checkCancelAllSteps,
@@ -12,6 +12,7 @@ import {
   checkOrderSetupSteps,
   checkSwapSteps,
   checkTransferSteps,
+  launchRoundTripCap,
   readyOf,
   type BookActCalls,
   type CheckedSteps,
@@ -32,6 +33,7 @@ import type {
   BookVaultQuoteResponse,
   DraftOpenStepsRequest,
   DraftOpenStepsResponse,
+  Execution,
   Operations,
   OrderRecord,
   Quote,
@@ -184,6 +186,9 @@ export interface TransferRequest {
   amount?: bigint
 }
 
+
+/** The Smart Launch lens's sale quote: what a pad pays a sale, in its quote token. */
+const SAFE_LAUNCH_LENS_ABI = parseAbi(['function quoteSell(address pad, uint256 id, address seller, uint256 tokensIn) view returns (uint256 quoteOut, uint256 taxBps)'])
 const EXECUTED = parseAbi(['event Executed(address indexed sender, address indexed tokenIn, address indexed tokenOut, uint256 amountIn, uint256 amountOut, address feeAsset, uint256 feeAmount, uint16 feeBps, uint8 feeMode, uint256 legCount)'])
 const BPS = 10_000n
 const DRAFT_ID = /^[0-9a-f]{32}$/
@@ -363,7 +368,35 @@ export class Mancer extends MancerClient {
       throw new MancerCheckError('swap', 'the answer is a launch route, which this request excluded')
     }
     const envelope = entrypoint === 'launch-coordinator' && Array.isArray(quote.execution!.transactions) && quote.execution!.transactions.length > 0
-    if (envelope) await this.trustedLaunchStack()
+    const stack = envelope ? await this.trustedLaunchStack() : null
+    if (stack) {
+      // the envelope's shape first (checkSwapSteps reads it again with the steps), then its launch against the pad on your
+      // own node: a sale's operator is for the launch of the token it sells, a purchase's round trip for a pad that
+      // launched the token it buys, so the launch the cap below is read for is the trade's own
+      const expected = {
+        account: wallet, chainId: trusted.chainId, router: trusted.router, tokenIn: base.tokenIn, tokenOut: base.tokenOut,
+        routerAllowanceTarget: trusted.allowanceTarget, coordinator: stack.coordinator, coordinatorAllowanceTarget: stack.allowanceTarget,
+        safeLaunchPads: stack.pads, amountIn: r.amountIn,
+      }
+      const shape = executionEnvelopeMismatch(quote.execution as never, expected)
+      if (shape) throw new MancerCheckError('swap', `the launch envelope does not pass the site's check: ${shape}`)
+      const onChain = await launchRouteChainMismatch(quote.execution as never, expected, {
+        launchIdOfToken: (pad, token) => this.publicClient.readContract({ address: pad, abi: safeLaunchPadLaunchIdAbi, functionName: 'launchIdOfToken', args: [token] }),
+      })
+      if (onChain) throw new MancerCheckError('swap', `the launch envelope does not match the pad on your node: ${onChain}`)
+    }
+    // a launch route lets the pad's adapter take its output back while the launch's tax decays, an allowance capped in
+    // the round trip's own token: a purchase's is the bought launch token, the swap's output, held to twice what the
+    // caller's own reference says the swap pays (or twice the caller's floor); a sale's is its pad's quote token, held
+    // to that where the pad is quoted in the swap's output, and otherwise to twice what the pinned lens says the pad
+    // pays this sale of the token's own launch (proven above), read on your own node. Never sized by the quote's figures
+    const roundTripCap = stack
+      ? await launchRoundTripCap(quote.execution as Execution, stack, {
+          tokenOut: base.tokenOut,
+          outputCap: 2n * (named?.reference ?? floor),
+          saleQuote: async (lens, pad, launchId) => (await this.publicClient.readContract({ address: lens, abi: SAFE_LAUNCH_LENS_ABI, functionName: 'quoteSell', args: [pad, launchId, wallet, r.amountIn] }))[0],
+        })
+      : null
     const checked = checkSwapSteps(quote, {
       wallet,
       recipient: wallet,
@@ -375,10 +408,7 @@ export class Mancer extends MancerClient {
       minOut: floor,
       maxFeeBps: fee,
       integratorFee: integrator ? { recipient: integrator.recipient, bps: integrator.bps } : null,
-      // a launch route lets the pad's adapter sell its output back while the launch's tax decays: at most twice what the
-      // caller's own reference says the swap pays (or twice the caller's floor), to an adapter whose code your node read
-      // as the reviewed build; never sized by the quote's own word
-      ...(envelope ? { roundTripCap: 2n * (named?.reference ?? floor) } : {}),
+      ...(roundTripCap !== null ? { roundTripCap } : {}),
     }, trusted)
     return { quote, minOut: floor, checked }
   }
