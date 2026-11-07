@@ -7,6 +7,7 @@ import {
   BOOK_DEPLOYMENTS,
   ORDER_EIP712_TYPES_V3,
   bookCallData,
+  bookLaunchDeployment,
   decodeRouterCall,
   executionEnvelopeMismatch,
   mancerOrdersV3Abi,
@@ -46,6 +47,22 @@ export interface StepReading {
   router?: RouterCallReading
   /** Every leg of a router call, read. */
   legs?: LegReading[]
+  /** The least gas the step is sent with, the check's own word and never the API's: a step that may bond a Book in the
+   * same transaction (a TraderBookPadV2 `graduate`, or a buy that closes its curve) keeps `BOOK_BONDING_GAS`, since a
+   * wallet's estimate finds the least gas the step runs with, which defers the bond. */
+  minGas?: bigint
+  /** A settlement on a settler that settles in the base pair where chosen: the asset every one of its sales pays. The
+   * sender reads the settler's `settleAssetFor(bookId)` on your node right before it sends the step, and sends nothing
+   * where it names another (the liquidation would run none of its sales and settle all the same). */
+  settlesIn?: BookSettlesIn
+}
+
+/** What a settlement's sales pay, and where the settler's word on it is read (`StepReading.settlesIn`). */
+export interface BookSettlesIn {
+  settler: Address
+  abiSet: BookDeployment['abiSet']
+  bookId: bigint
+  pays: Address
 }
 
 declare const checkedBrand: unique symbol
@@ -63,6 +80,16 @@ export interface CheckedSteps {
 }
 
 const UNBOUNDED = 1n << 128n
+
+/**
+ * The gas a step names where it may bond a Book in the same transaction (a TraderBookPadV2 `graduate`, or a buy that
+ * closes its curve), as the steps route names it: the pad's own work, then the bond with 63/64 of what is left at the try
+ * (the pad bonds only with 3,000,000 gas left there, and defers the bond otherwise), and a Uniswap v3 bond that creates
+ * its pool takes about 6.1 million on its own. The contracts kit's `BOOK_CLAIMS_BONDING_GAS`; a test in Mancer's
+ * repository holds the two equal.
+ */
+export const BOOK_BONDING_GAS = 9_000_000n
+
 const WETH_ABI = parseAbi(['function deposit() payable'])
 const same = (a: string | null | undefined, b: string | null | undefined) => !!a && !!b && a.toLowerCase() === b.toLowerCase()
 
@@ -512,6 +539,12 @@ export interface BookActCalls {
   /** An exact approval the act needs where the allowance falls short: the token, its spender, the amount. */
   approval?: { token: Address; spender: Address; amount: bigint } | null
   calls: BookCall[]
+  /** The act's last call may bond the Book in the same transaction (a TraderBookPadV2 `graduate`, or a buy that closes
+   * its curve): its step is read with `BOOK_BONDING_GAS` as its least gas (`StepReading.minGas`). */
+  mayBond?: boolean
+  /** The act's last call is a settlement whose sales pay this asset, on a settler that settles in the base pair where
+   * chosen: its step is read with it (`StepReading.settlesIn`). */
+  settlesIn?: BookSettlesIn
 }
 
 export interface BookStepsCheck {
@@ -552,7 +585,14 @@ function exactCalls(check: string, ready: ReadySteps, expected: BookActCalls): S
   want.forEach((c, j) => {
     const s = steps[i + j]!
     if (!sameCall(s, c)) refuse(check, `the step is not the act's own call (${expected.calls[j]!.functionName}) to its own contract, with its own arguments and ether`, i + j)
-    readings.push({ step: i + j, kind: s.kind, to: getAddress(s.to), value: c.value, does: `${expected.calls[j]!.functionName} on ${getAddress(c.to)}` })
+    const bonds = expected.mayBond === true && j === want.length - 1
+    const settles = expected.settlesIn && j === want.length - 1 ? expected.settlesIn : null
+    readings.push({
+      step: i + j, kind: s.kind, to: getAddress(s.to), value: c.value,
+      does: `${expected.calls[j]!.functionName} on ${getAddress(c.to)}${bonds ? ', and may bond the Book in the same transaction' : ''}${settles ? `, its sales paying ${getAddress(settles.pays)}` : ''}`,
+      ...(bonds ? { minGas: BOOK_BONDING_GAS } : {}),
+      ...(settles ? { settlesIn: Object.freeze({ ...settles }) } : {}),
+    })
   })
   return readings
 }
@@ -596,14 +636,16 @@ export interface DraftOpenCheck {
   deployments?: readonly BookDeployment[]
 }
 
-/** A saved Book's open (`POST /v1/books/drafts/{id}/steps`): one step, exactly `openBook` on a factory the kit pins
- * that opens new Books, with the name, ticker, traders and terms the bot asked for. */
+/** A saved Book's open (`POST /v1/books/drafts/{id}/steps`): one step, exactly `openBook` on the factory new Books open
+ * on (the kit's launch deployment, `bookLaunchDeployment`, among those trusted), with the name, ticker, traders and terms
+ * the bot asked for. */
 export function checkDraftOpenSteps(answer: DraftOpenStepsResponse, e: DraftOpenCheck): CheckedSteps & { deployment: BookDeployment } {
   if (answer.draft?.id !== e.draftId) refuse('book', 'the steps are for another draft')
   const deployment = bookDeploymentOf(answer.draft.factory, e.deployments)
   if (!deployment) refuse('book', "the draft's factory is not one this SDK pins")
   if (e.factory && !same(answer.draft.factory, e.factory)) refuse('book', 'the open is on another factory than the one you saved the draft on')
-  if (!deployment.opensNewBooks) refuse('book', 'the factory opens no new Books')
+  const launch = bookLaunchDeployment(e.deployments ?? BOOK_DEPLOYMENTS)
+  if (!deployment.opensNewBooks || !launch || !same(launch.factory.address, deployment.factory.address)) refuse('book', 'the factory opens no new Books')
   if (!e.open) refuse('book', "the open is rebuilt from the draft you made and the terms you named: the answer's calldata is not taken")
   if (answer.draft.name !== undefined && answer.draft.name !== e.open.name) refuse('book', "the answer names another name than the draft's")
   if (answer.draft.symbol !== undefined && answer.draft.symbol !== e.open.symbol) refuse('book', "the answer names another ticker than the draft's")

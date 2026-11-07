@@ -29,8 +29,56 @@ export { MancerError, MancerCheckError, SDK_ERROR_CODES, isRetryable, readRateLi
 export type { RateLimitInfo, RetryOptions } from './errors'
 export { MancerStepError, sendCheckedSteps } from './send'
 export type { SendOptions, SentStep } from './send'
-export { bookActCalls, bookBasePairOf, bookQuoteDigest, bookRedeemPayouts, checkVaultQuote, potAfterSweep, raiseCalls, readBookRedemption, readChainBook, readVaultPending, redeemPayout, settlementCalls, vaultRouteCheck, verifyBookDeployment } from './books'
+export { bookActCalls, bookBasePairOf, bookQuoteDigest, bookRedeemPayouts, checkVaultQuote, potAfterSweep, raiseCalls, readBookRedemption, readBookSettleAsset, readChainBook, readVaultPending, redeemPayout, settlementCalls, settlementPaysAsset, vaultRouteCheck, verifyBookDeployment } from './books'
 export type { BookAction, BookActArgs, BookPot, BookRedemption, ChainBook } from './books'
+// perps inside Books: a trader's own half of a vault's split Lighter key (Mancer's split-key signer loaded from its pinned
+// files, the share kept in a file of the caller's own), the checks every deposit and order is held to before it is signed,
+// and the send to Lighter RH
+export {
+  BOOKS_PERPS_EXPIRY_MAX_MS,
+  BOOKS_PERPS_EXPIRY_MIN_MS,
+  BOOKS_PERPS_KINDS,
+  BOOKS_PERPS_SEND_URL,
+  LighterSendError,
+  bookPerpsDepositQuoteOf,
+  bookPerpsPendingDepositOf,
+  bookPerpsTraderSlotOf,
+  booksPerpsSplitFilesFrom,
+  checkBookPerpsDepositQuote,
+  checkBookPerpsKeyAnswer,
+  checkBookPerpsOrderAnswer,
+  checkBookPerpsOwnKey,
+  checkBookPerpsTraderKey,
+  fetchBooksPerpsSplitFiles,
+  loadBooksPerpsSplit,
+  newBooksPerpsKeyContext,
+  readBookPerpsChain,
+  readBooksPerpsShare,
+  sendBookPerpsOrder,
+  writeBooksPerpsShare,
+} from './books-perps'
+export type {
+  BookPerpsBoundKey,
+  BookPerpsChain,
+  BookPerpsDepositAnswer,
+  BookPerpsKeyAnswer,
+  BookPerpsKeySlot,
+  BookPerpsOrderAnswer,
+  BookPerpsOrderReport,
+  BookPerpsOrderRequest,
+  BookPerpsRead,
+  BooksPerpsFileReader,
+  BooksPerpsSend,
+  BooksPerpsShare,
+  BooksPerpsShareFs,
+  BooksPerpsSplitFiles,
+} from './books-perps'
+export { BOOK_PERPS_DEPLOYMENTS, MANCER_SPLIT_SIGNER, bookPerpsKeyAuthorization, bookPerpsTraderSlot } from './shared'
+export type { BookPerpsDeployment, SplitAnswer, SplitCommitment, SplitKeyGenMsg, SplitKind, SplitShare, SplitSigned, SplitSigner, SplitTx } from './shared'
+// the Books deployments the kit pins and what each one's contracts do: where a new Book opens, its pad's rules (`gen3` or
+// `claims`, TraderBookPadV2), whether its settler settles in the base pair where chosen, and its vaults' EIP-712 name
+export { BOOK_DEPLOYMENTS, bookLaunchDeployment, bookPadKind, bookSettlesInChosenAsset, bookVaultDomainName } from './shared'
+export type { BookDeployment } from './shared'
 export {
   bookDeploymentOf,
   checkBookSteps,
@@ -45,7 +93,7 @@ export {
   readApproval,
   readyOf,
 } from './checks'
-export type { BookActCalls, BookStepsCheck, CheckedSteps, DraftOpenCheck, OrderSetupCheck, StepReading, SwapCheck, TransferAssetInput, TransferCheck } from './checks'
+export type { BookActCalls, BookSettlesIn, BookStepsCheck, CheckedSteps, DraftOpenCheck, OrderSetupCheck, StepReading, SwapCheck, TransferAssetInput, TransferCheck } from './checks'
 export { contractsMismatch, pinnedContracts, readCodeHashes } from './contracts'
 export type { TrustedContracts } from './contracts'
 export { sessionClaims, signInMessageMismatch } from './auth'

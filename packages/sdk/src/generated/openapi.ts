@@ -102,7 +102,7 @@ export type StepsError = {
 /** One act and the wallet that sends it. Each act takes its own fields beside `action` and `wallet`, and any other field is 400 `bad-body`. */
 export type BookStepsRequest = {
   /** The act. Who may send it is checked against the Book's phase and the wallet's role; [Ready-to-sign steps](/api/guides/steps) lists each act's sender. */
-  action: "arm" | "abort" | "graduate" | "bond" | "proposeTrade" | "confirmTrade" | "executeTrade" | "cancelOrder" | "revokeOrders" | "revokeAllowance" | "syncTax" | "syncTracked" | "stake" | "unstake" | "claim" | "harvest" | "sweepUnowned" | "sweepLeftover" | "redeem" | "claimCreatorCut"
+  action: "arm" | "abort" | "graduate" | "bond" | "proposeTrade" | "confirmTrade" | "executeTrade" | "cancelOrder" | "revokeOrders" | "revokeAllowance" | "syncTax" | "syncTracked" | "stake" | "unstake" | "claim" | "harvest" | "sweepUnowned" | "sweepLeftover" | "redeem" | "claimCreatorCut" | "padClaim" | "setSettleAsset"
   /** The wallet that sends the steps: a session's own wallet by default, which a session may override; an API key must name it (400 `wallet-required`). */
   wallet?: Address
   /** `proposeTrade`, and `sweepLeftover` of a token other than WETH and the Book's own: Mancer's signed quote from `POST /v1/books/{token}/vault-quote`, unused, and at least 15 seconds from its deadline. */
@@ -119,6 +119,10 @@ export type BookStepsRequest = {
   tokens?: Address[]
   /** `stake`, `unstake` and `redeem`: raw units of the Book token, or `all` for what the wallet holds (or has staked). */
   amount?: string
+  /** `padClaim`: on a WETH Book, false keeps WETH; ether by default. */
+  unwrap?: boolean
+  /** `setSettleAsset`: true settles the Book in its base pair, false in WETH. 409 `wrong-phase` from five minutes before its term ends. */
+  inQuote?: boolean
 }
 
 export type BookStepsResponse = ReadySteps & {
@@ -133,7 +137,7 @@ export type BookStepsResponse = ReadySteps & {
 }
 
 export type DraftOpenStepsRequest = {
-  /** The record's creator, who sends the open. A session's own wallet by default. */
+  /** The record's dev, who sends the open. A session's own wallet by default. */
   wallet?: Address
   /** `openBook`'s terms beside the record's name, ticker and factory. A zero economics field takes the raise contract's default, a zero `quote` is WETH, and `venue` 0 is Uniswap v3, 1 v4. */
   terms: {
@@ -193,6 +197,195 @@ export type TransferStepsResponse = ReadySteps & {
   warnings: string[]
 }
 
+/** What a client needs to act on Lighter RH through Mancer. A client checks the environment, the partner account and the fee against Mancer's contracts kit before any wallet signs. */
+export type PerpsConfig = {
+  /** Always `public`: perps are open to every wallet wherever this answers, and the route answers 404 where they are off. */
+  access: "public"
+  environment: {
+    id: "rh-mainnet" | "rh-testnet" | "lighter-testnet"
+    name: string
+    /** Lighter's REST base; every path is under `/api/v1/`. */
+    restUrl: string
+    /** The WebSocket a device trades on. */
+    wsUrl: string
+    /** The market-data WebSocket any region may read. */
+    readOnlyWsUrl: string
+    /** The chain id Lighter transactions and fee approvals are signed with: 466324 on RH mainnet. */
+    chainId: number
+  }
+  /** The deposit's facts on Robinhood Chain; null for a testnet, which a faucet funds. */
+  deposit: {
+    chainId: 4663
+    /** ZkLighter, Lighter's exchange contract. */
+    contract: Address
+    /** USDG. */
+    token: Address
+    symbol: "USDG"
+    decimals: 6
+    assetIndex: 3
+    /** Perps collateral. */
+    routeType: 0
+    /** The least a deposit may be, in units: 1 USDG. */
+    minimum: Uint
+    minimumWithdrawal: Uint
+  } | null
+  /** Mancer's partner account on Lighter, which a fee approval names; null where none is named yet, and no deposit is built then. */
+  partnerIndex: number | null
+  fee: {
+    /** Mancer's fee per million of a trade's notional: 500 is 0.05%. */
+    takerPerMillion: number
+    makerPerMillion: number
+    /** The most Mancer's fee may be: 1,000 (0.1%). Refuse a config past it. */
+    ceilingPerMillion: number
+  }
+  approval: {
+    maxPerpsTakerFee: number
+    maxPerpsMakerFee: number
+    maxSpotTakerFee: 0
+    maxSpotMakerFee: 0
+    /** How long an approval of Mancer's fee lasts. */
+    expiryDays: number
+    /** Renew from this many days before it ends, so every resting order ends first. */
+    renewDays: number
+  }
+  keySlots: {
+    site: 42
+    app: 43
+    held: 44
+    /** Lighter's own apps' slots: never write them. */
+    reserved: number[]
+    /** The slots a bot registers its own key in. */
+    agents: {
+      first: number
+      last: number
+    }
+  }
+  risk: {
+    /** Below `open`, add no risk: no deposit, no order that grows a position. Every exit stays open. */
+    mode: "open" | "reduce-only" | "off"
+    setting: "open" | "reduce-only" | "off"
+    /** `no-partner`: no partner account is named yet. */
+    reason: "no-partner" | null
+  }
+  markets: {
+    /** The markets new risk is taken in, by Lighter's symbol. */
+    launch: string[]
+    /** Mancer's leverage cap; a market's cap is the lower of this and Lighter's. */
+    maxLeverage: number
+    leverageOverrides: {
+      [key: string]: number
+    }
+  }
+  attestation: {
+    /** The version of the words a user attests to before enabling perps. */
+    version: number
+  }
+}
+
+/** One of Lighter RH's perp markets. Prices are decimal strings in dollars; the funding is a percent of the position an hour. */
+export type PerpsMarket = {
+  symbol: string
+  /** Lighter's market index. */
+  marketId: number
+  class: "crypto" | "stock" | "etf" | "commodity" | "pre-ipo" | "meme" | "other"
+  /** A market Mancer takes new risk in. */
+  launch: boolean
+  status: string
+  frozen: boolean
+  /** Lighter holds the market to orders that reduce a position. */
+  reduceOnly: boolean
+  /** Lighter's trading hours, or null where it names none. */
+  tradingHours: string | null
+  sizeDecimals: number
+  priceDecimals: number
+  quoteDecimals: number
+  /** The least an order's size may be, in the base unit. */
+  minBaseAmount: string
+  /** The least an order's notional may be, in dollars. */
+  minQuoteAmount: string
+  /** Lighter's most leverage. */
+  maxLeverage: number
+  /** Mancer's cap: the lower of Lighter's and Mancer's own. */
+  leverageCap: number
+  /** Per 10,000 of the position. */
+  marginFractions: {
+    defaultInitial: number
+    minInitial: number
+    maintenance: number
+    closeout: number
+  }
+  /** Lighter's base fee as its API states it. */
+  lighterFee: {
+    taker: string
+    maker: string
+  }
+  mark: string | null
+  index: string | null
+  last: string | null
+  bestBid: string | null
+  bestAsk: string | null
+  change24hPct: number | null
+  high24h: number | null
+  low24h: number | null
+  volume24hBase: number | null
+  /** The day's notional, in dollars. */
+  volume24hQuote: number | null
+  /** In the base unit. */
+  openInterest: string | null
+  /** In dollars. */
+  openInterestUsd: string | null
+  funding: {
+    /** The funding last paid, a percent of the position an hour. */
+    hourlyPct: string | null
+    /** The estimate of the next. */
+    nextHourlyPct: string | null
+    /** When the last was paid, in milliseconds. */
+    lastAt: number | null
+    /** When the next is paid, in milliseconds. */
+    nextAt: number
+  }
+  /** Where the figures came from: Lighter's market stream, or its market details read each minute. */
+  source: "stream" | "details"
+  /** When the figures were read, in milliseconds. */
+  updatedAt: number | null
+}
+
+export type PerpsCandlePage = {
+  symbol: string
+  marketId: number
+  tf: number
+  source: "lighter"
+  candles: Candle[]
+  hasMore: boolean
+  /** Pass as `before` for the previous page. */
+  nextBefore?: number
+  /** The last page read, answered where Lighter did not answer just now: ask again in a few seconds. */
+  stale?: true
+}
+
+export type PerpsDepositStepsRequest = {
+  /** The wallet that sends and whose Lighter account is credited. A session's own by default; an API key names it. */
+  wallet?: Address
+  /** USDG's units (6 decimals), at least 1,000,000 (1 USDG). */
+  amount: Uint
+}
+
+export type PerpsWithdrawalStepsRequest = {
+  /** The account's owner, who sends and is paid. A session's own by default; an API key names it. */
+  wallet?: Address
+  /** `withdraw` queues a secure withdrawal from the chain; `claim` pays a pending one to the wallet. */
+  kind: "withdraw" | "claim"
+  /** USDG's units (6 decimals); a withdrawal is 1 USDG at the least. */
+  amount: Uint
+  /** `withdraw`: the wallet's Lighter account index, from Lighter's `accountsByL1Address`. */
+  accountIndex?: number
+}
+
+export type PerpsWithdrawalStepsResponse = ReadySteps & {
+  /** Where Lighter lists no such account for the wallet, it says so; the steps are built all the same. */
+  warnings: string[]
+}
+
 /** A 20-byte hex address. */
 export type Address = string
 
@@ -230,7 +423,7 @@ export type Error = {
 }
 
 /** Every code an answer may carry. A code keeps its meaning for good; a new rule takes a new code. */
-export type ErrorCode = "account-not-found" | "alerts-max" | "already-in" | "amount-exceeds-tracked" | "app-access-unavailable" | "auth-required" | "auth-unavailable" | "bad-action" | "bad-address" | "bad-addresses" | "bad-amount" | "bad-avatar-source" | "bad-bio" | "bad-body" | "bad-choice" | "bad-collection" | "bad-count" | "bad-cursor" | "bad-details" | "bad-display-name" | "bad-fields" | "bad-filter" | "bad-gateway" | "bad-id" | "bad-image-url" | "bad-json" | "bad-key-name" | "bad-label" | "bad-limit" | "bad-message" | "bad-mode" | "bad-name" | "bad-page" | "bad-platform" | "bad-pool" | "bad-public" | "bad-push-token" | "bad-query" | "bad-read" | "bad-reason" | "bad-recipient" | "bad-request" | "bad-scope" | "bad-scopes" | "bad-seq" | "bad-show-portfolio" | "bad-signature" | "bad-status" | "bad-symbol" | "bad-targets" | "bad-telegram" | "bad-then" | "bad-timeframe" | "bad-token" | "bad-token-id" | "bad-tokens-per-nft" | "bad-tx-hash" | "bad-username" | "bad-via" | "bad-wallet" | "bad-website" | "bad-x" | "batch-too-large" | "bio-length" | "bio-lines" | "block-self" | "blocking-max" | "book-cancelled" | "book-indexing" | "book-not-armed" | "book-settled" | "books-chain-stale" | "books-deployment-unverified" | "books-index-unavailable" | "books-rate-limited" | "books-sign-log-unavailable" | "books-signer-has-code" | "books-signer-not-current" | "books-signer-stopped" | "books-signer-unavailable" | "books-signing-off" | "books-state-unavailable" | "bucket-full" | "budget-exhausted" | "chain-unavailable" | "confirm-delete" | "conflict" | "contract-not-served" | "deadline-past-unlock" | "deletion-not-pending" | "deployment-unsupported" | "description-blank" | "description-length" | "description-lines" | "description-link" | "details-too-long" | "display-name-address" | "display-name-blank" | "display-name-length" | "display-name-link" | "display-name-word" | "draft-deployed" | "draft-name" | "draft-not-found" | "draft-symbol" | "events-unavailable" | "factory-not-open" | "feed-stale" | "field-not-for-kind" | "fill-impact-too-high" | "follow-blocked" | "follow-limit" | "follow-self" | "following-max" | "follows-paused" | "forbidden" | "geo-restricted" | "idempotency-in-progress" | "idempotency-key-busy" | "idempotency-key-invalid" | "idempotency-key-reused" | "impact-too-high" | "insufficient-eth" | "insufficient-tokens" | "integrator-fee-above-ceiling" | "integrator-fee-needs-key" | "integrator-fee-not-allowed" | "integrator-fee-unavailable" | "internal-error" | "invalid-accepted-min-out" | "invalid-integrator-fee" | "inventory-empty" | "inventory-short" | "invite-invalid" | "invite-not-found" | "invite-own" | "invite-tries" | "invite-used" | "key-managed-by-mancer" | "key-name-ambiguous" | "key-name-taken" | "key-not-found" | "key-not-owner" | "key-not-signing" | "key-required" | "key-scope" | "key-server-only" | "key-session-only" | "keys-max" | "keys-unavailable" | "launch-state-unavailable" | "legacy-closed" | "limit-under-market" | "link-busy" | "link-choice" | "link-contract-wallet" | "link-expired" | "link-limit" | "link-signature" | "linked-wallet-key-only" | "live-grants-full" | "logo-dimensions" | "logo-empty" | "logo-forbidden" | "logo-not-found" | "logo-not-raster" | "logo-too-large" | "logo-type" | "logo-type-mismatch" | "logo-unavailable" | "lp-share" | "middle-not-swept" | "middle-refused" | "names-required" | "nft-market-exists" | "nft-market-indexing" | "nft-market-paused" | "nft-market-state-unavailable" | "nft-market-unverified" | "nft-markets-unavailable" | "nft-not-found" | "no-image" | "no-nft-market" | "no-picture" | "no-reference" | "no-route" | "no-username" | "nonce-invalid" | "not-a-book" | "not-a-collection" | "not-a-trader" | "not-activated" | "not-an-eoa" | "not-an-nft" | "not-an-nft-market" | "not-book-operator" | "not-eligible" | "not-eligible-yet" | "not-following" | "not-found" | "not-frozen" | "not-in-inventory" | "not-market-maker" | "not-offered" | "not-owner" | "not-raising" | "not-read-yet" | "not-the-creator" | "note-required" | "nothing-to-claim" | "nothing-to-do" | "nothing-to-report" | "order-fills-unavailable" | "order-kind-unavailable" | "order-not-open" | "order-out-of-scope" | "orders-exceed-holding" | "orders-maker-only" | "origin-refused" | "payload-too-large" | "pending-mismatch" | "picture-dimensions" | "picture-empty" | "picture-forbidden" | "picture-frames" | "picture-not-raster" | "picture-too-large" | "picture-type" | "picture-type-mismatch" | "picture-unavailable" | "pool-fee-trap" | "pool-take-too-high" | "price-moved" | "primary-wallet" | "primary-wallet-only" | "profile-field-held" | "profiles-not-open" | "profiles-unavailable" | "q-required" | "quote-assessment-stale" | "quote-expired" | "quote-invalid" | "quote-required" | "quote-timeout" | "quote-value-discrepancy" | "quotes-paused" | "rate-limited" | "reason-required" | "recipient-not-found" | "refresh-nothing" | "refresh-unavailable" | "refresh-wait" | "report-limit" | "report-not-found" | "report-self" | "reversal-cooldown" | "reverses-live-order" | "round-trip-trap" | "route-leaves-stock" | "route-mismatch" | "route-pool-refused" | "route-touches-book-token" | "router-unavailable" | "salt-required" | "search-busy" | "search-unavailable" | "self-serve-keys-off" | "sell-exceeds-balance" | "sell-exceeds-curve" | "sells-disabled" | "session-renew-limit" | "session-renew-off" | "session-required" | "session-revoked" | "signature-mismatch" | "simulation-mismatch" | "simulation-reverted" | "slippage-exceeded" | "stake-unread" | "steps-unavailable" | "stock-not-receivable" | "stocks-ack-required" | "stop-band-out-of-range" | "stop-band-too-narrow" | "stop-needs-cash-side" | "stop-over-market" | "stop-too-deep" | "stop-would-fire" | "store-busy" | "store-unavailable" | "stream-tickets-unavailable" | "target-duplicate" | "target-own-token" | "target-unknown" | "target-unverified" | "targets-locked" | "targets-required" | "terms-refused" | "thesis-blank" | "thesis-held" | "thesis-length" | "thesis-lines" | "thesis-link" | "thesis-not-found" | "tier-not-upgrade" | "timeout" | "token-is-a-book" | "token-refused" | "token-router-refused" | "token-sell-blocked" | "token-sell-gated" | "too-many-streams" | "transaction-not-found" | "transfer-refused" | "tx-taken" | "unavailable" | "unknown-field" | "unknown-leg" | "unknown-order" | "unknown-pool" | "unknown-token" | "unknown-username" | "unprocessable" | "unsupported-media-type" | "upload-limit" | "user-not-found" | "username-cooldown" | "username-format" | "username-held" | "username-in-use" | "username-length" | "username-lookalike" | "username-needs-x-or-stake" | "username-not-in-use" | "username-opened-elsewhere" | "username-prefix" | "username-reserved" | "username-staff-word" | "username-symbol" | "username-taken" | "username-x-handle" | "vault-simulation-failed" | "vault-tracks-16" | "venue-policy-changed" | "venue-policy-unavailable" | "vote-needs-verified" | "votes-rate-limited" | "wallet-already-linked" | "wallet-linked-elsewhere" | "wallet-mismatch" | "wallet-not-linked" | "wallet-required" | "wallets-max" | "webhook-busy" | "webhook-event-before-hook" | "webhook-event-not-found" | "webhook-event-not-subscribed" | "webhook-event-pending" | "webhook-events-invalid" | "webhook-not-found" | "webhook-resume-session-only" | "webhook-url-invalid" | "webhook-url-not-public" | "webhook-url-unresolvable" | "webhooks-max" | "webhooks-off" | "webhooks-unavailable" | "website-social" | "weth-spot" | "window-closed" | "window-closing" | "wrong-phase" | "x-device-expired" | "x-device-unknown" | "x-device-used" | "x-link-busy" | "x-link-denied" | "x-link-failed" | "x-not-linked" | "x-refresh-wait" | "x-ticket-not-yours" | "x-ticket-unknown" | "x-unavailable" | "zero-count" | "zero-trade"
+export type ErrorCode = "account-not-found" | "alerts-max" | "already-in" | "amount-exceeds-tracked" | "app-access-unavailable" | "auth-required" | "auth-unavailable" | "bad-action" | "bad-address" | "bad-addresses" | "bad-amount" | "bad-avatar-source" | "bad-bio" | "bad-body" | "bad-choice" | "bad-collection" | "bad-count" | "bad-cursor" | "bad-details" | "bad-display-name" | "bad-fields" | "bad-filter" | "bad-gateway" | "bad-id" | "bad-image-url" | "bad-json" | "bad-key-name" | "bad-label" | "bad-limit" | "bad-message" | "bad-mode" | "bad-name" | "bad-page" | "bad-platform" | "bad-pool" | "bad-public" | "bad-push-token" | "bad-query" | "bad-read" | "bad-reason" | "bad-recipient" | "bad-request" | "bad-scope" | "bad-scopes" | "bad-seq" | "bad-show-portfolio" | "bad-signature" | "bad-status" | "bad-symbol" | "bad-targets" | "bad-telegram" | "bad-then" | "bad-timeframe" | "bad-token" | "bad-token-id" | "bad-tokens-per-nft" | "bad-tx-hash" | "bad-username" | "bad-via" | "bad-wallet" | "bad-website" | "bad-x" | "batch-too-large" | "bio-length" | "bio-lines" | "block-self" | "blocking-max" | "book-cancelled" | "book-indexing" | "book-not-armed" | "book-settled" | "books-chain-stale" | "books-deployment-unverified" | "books-index-unavailable" | "books-rate-limited" | "books-sign-log-unavailable" | "books-signer-has-code" | "books-signer-not-current" | "books-signer-stopped" | "books-signer-unavailable" | "books-signing-off" | "books-state-unavailable" | "bucket-full" | "budget-exhausted" | "chain-unavailable" | "confirm-delete" | "conflict" | "contract-not-served" | "deadline-past-unlock" | "deletion-not-pending" | "deployment-unsupported" | "description-blank" | "description-length" | "description-lines" | "description-link" | "details-too-long" | "dev-not-a-wallet" | "display-name-address" | "display-name-blank" | "display-name-length" | "display-name-link" | "display-name-word" | "draft-deployed" | "draft-name" | "draft-not-found" | "draft-symbol" | "events-unavailable" | "factory-not-open" | "feed-stale" | "field-not-for-kind" | "fill-impact-too-high" | "follow-blocked" | "follow-limit" | "follow-self" | "following-max" | "follows-paused" | "forbidden" | "geo-restricted" | "idempotency-in-progress" | "idempotency-key-busy" | "idempotency-key-invalid" | "idempotency-key-reused" | "impact-too-high" | "insufficient-eth" | "insufficient-tokens" | "integrator-fee-above-ceiling" | "integrator-fee-needs-key" | "integrator-fee-not-allowed" | "integrator-fee-unavailable" | "internal-error" | "invalid-accepted-min-out" | "invalid-integrator-fee" | "inventory-empty" | "inventory-short" | "invite-invalid" | "invite-not-found" | "invite-own" | "invite-tries" | "invite-used" | "key-managed-by-mancer" | "key-name-ambiguous" | "key-name-taken" | "key-not-found" | "key-not-owner" | "key-not-signing" | "key-required" | "key-scope" | "key-server-only" | "key-session-only" | "keys-max" | "keys-unavailable" | "launch-state-unavailable" | "legacy-closed" | "limit-under-market" | "link-busy" | "link-choice" | "link-contract-wallet" | "link-expired" | "link-limit" | "link-signature" | "linked-wallet-key-only" | "live-grants-full" | "logo-dimensions" | "logo-empty" | "logo-forbidden" | "logo-not-found" | "logo-not-raster" | "logo-too-large" | "logo-type" | "logo-type-mismatch" | "logo-unavailable" | "lp-share" | "middle-not-swept" | "middle-refused" | "names-required" | "nft-market-exists" | "nft-market-indexing" | "nft-market-paused" | "nft-market-state-unavailable" | "nft-market-unverified" | "nft-markets-unavailable" | "nft-not-found" | "no-image" | "no-nft-market" | "no-picture" | "no-reference" | "no-route" | "no-username" | "nonce-invalid" | "not-a-book" | "not-a-collection" | "not-a-target" | "not-a-trader" | "not-activated" | "not-an-eoa" | "not-an-nft" | "not-an-nft-market" | "not-book-operator" | "not-eligible" | "not-eligible-yet" | "not-following" | "not-found" | "not-frozen" | "not-in-inventory" | "not-market-maker" | "not-offered" | "not-owner" | "not-raising" | "not-read-yet" | "not-the-creator" | "note-required" | "nothing-to-claim" | "nothing-to-do" | "nothing-to-report" | "order-fills-unavailable" | "order-kind-unavailable" | "order-not-open" | "order-out-of-scope" | "orders-exceed-holding" | "orders-maker-only" | "origin-refused" | "payload-too-large" | "pending-mismatch" | "perps-above-available" | "perps-account-index-bound" | "perps-account-index-mismatch" | "perps-adapter-unlisted" | "perps-adapter-unverified" | "perps-approvals-required" | "perps-bad-commitment" | "perps-bad-key-context" | "perps-bad-key-message" | "perps-bad-key-signature" | "perps-bad-targets" | "perps-below-minimum" | "perps-client-order-index-used" | "perps-commitment-reused" | "perps-deposit-closed" | "perps-environment" | "perps-expiry-past-wind-down" | "perps-key-closed" | "perps-key-context-used" | "perps-key-limit" | "perps-key-needed" | "perps-key-not-set" | "perps-key-unknown" | "perps-market-closed" | "perps-modify-trigger" | "perps-no-account" | "perps-no-slot" | "perps-nonce-live" | "perps-nonce-unavailable" | "perps-order-side-unknown" | "perps-reduce-off" | "perps-risk-off" | "perps-session-only" | "perps-sign-log-unavailable" | "perps-target-unknown" | "perps-too-far-from-mark" | "perps-tx-unknown" | "perps-unknown-market" | "perps-unread" | "perps-unsupported" | "perps-upstream-unavailable" | "perps-usdg-spot" | "perps-vault-refused" | "perps-vault-signer-stopped" | "perps-vault-signer-unavailable" | "perps-wind-down" | "perps-wind-down-first" | "picture-dimensions" | "picture-empty" | "picture-forbidden" | "picture-frames" | "picture-not-raster" | "picture-too-large" | "picture-type" | "picture-type-mismatch" | "picture-unavailable" | "pool-fee-trap" | "pool-take-too-high" | "price-moved" | "primary-wallet" | "primary-wallet-only" | "profile-field-held" | "profiles-unavailable" | "q-required" | "quote-assessment-stale" | "quote-expired" | "quote-invalid" | "quote-required" | "quote-timeout" | "quote-value-discrepancy" | "quotes-paused" | "rate-limited" | "reason-required" | "recipient-not-found" | "refresh-nothing" | "refresh-unavailable" | "refresh-wait" | "report-limit" | "report-not-found" | "report-self" | "reversal-cooldown" | "reverses-live-order" | "round-trip-trap" | "route-leaves-stock" | "route-mismatch" | "route-pool-refused" | "route-touches-book-token" | "router-unavailable" | "salt-required" | "search-busy" | "search-unavailable" | "sell-exceeds-balance" | "sell-exceeds-curve" | "sells-disabled" | "session-renew-limit" | "session-required" | "session-revoked" | "signature-mismatch" | "simulation-mismatch" | "simulation-reverted" | "slippage-exceeded" | "stake-unread" | "steps-unavailable" | "stock-not-receivable" | "stocks-ack-required" | "stop-band-out-of-range" | "stop-band-too-narrow" | "stop-needs-cash-side" | "stop-over-market" | "stop-too-deep" | "stop-would-fire" | "store-busy" | "store-unavailable" | "stream-tickets-unavailable" | "target-duplicate" | "target-own-token" | "target-unknown" | "target-unverified" | "targets-locked" | "targets-required" | "terms-refused" | "thesis-blank" | "thesis-held" | "thesis-length" | "thesis-lines" | "thesis-link" | "thesis-not-found" | "tier-not-upgrade" | "timeout" | "token-refused" | "token-router-refused" | "token-sell-blocked" | "token-sell-gated" | "too-many-streams" | "transaction-not-found" | "transfer-refused" | "tx-taken" | "unavailable" | "unknown-field" | "unknown-leg" | "unknown-order" | "unknown-pool" | "unknown-token" | "unknown-username" | "unprocessable" | "unsupported-media-type" | "upload-limit" | "user-not-found" | "username-cooldown" | "username-format" | "username-held" | "username-in-use" | "username-length" | "username-lookalike" | "username-needs-x-or-stake" | "username-not-in-use" | "username-opened-elsewhere" | "username-prefix" | "username-reserved" | "username-staff-word" | "username-symbol" | "username-taken" | "username-x-handle" | "vault-simulation-failed" | "vault-tracks-16" | "venue-policy-changed" | "venue-policy-unavailable" | "vote-needs-verified" | "votes-rate-limited" | "wallet-already-linked" | "wallet-linked-elsewhere" | "wallet-mismatch" | "wallet-not-linked" | "wallet-required" | "wallets-max" | "webhook-busy" | "webhook-event-before-hook" | "webhook-event-not-found" | "webhook-event-not-subscribed" | "webhook-event-pending" | "webhook-events-invalid" | "webhook-not-found" | "webhook-resume-session-only" | "webhook-url-invalid" | "webhook-url-not-public" | "webhook-url-unresolvable" | "webhooks-max" | "webhooks-off" | "webhooks-unavailable" | "website-social" | "weth-spot" | "window-closed" | "window-closing" | "wrong-phase" | "x-device-expired" | "x-device-unknown" | "x-device-used" | "x-link-busy" | "x-link-denied" | "x-link-failed" | "x-not-linked" | "x-refresh-wait" | "x-ticket-not-yours" | "x-ticket-unknown" | "x-unavailable" | "zero-count" | "zero-trade"
 
 /** What a wallet key may ask beyond the public reads: the account's own reads, building trades and orders, the account's records on Mancer, or Books signing for its own wallet. */
 export type KeyScope = "read" | "trade" | "records" | "books"
@@ -843,6 +1036,8 @@ export type TokenDetail = Token & {
     /** The tokens one NFT trades at, raw units as an integer string. */
     tokensPerNft: string
   }
+  /** The wallet that answers for the token: Mancer's word, else a Book's dev, else the wallet its launch log names as the one that launched it, where that is a wallet. Null where none names one, absent where it could not be read. */
+  dev?: TokenDev | null
   /** A token Mosh launched: its swarm's agent vaults, which its circulating supply and market cap leave out, as Mosh's own supply figure does. Absent on every other token. */
   agentVaults?: {
     /** The Mosh swarm that lists the vaults. */
@@ -944,7 +1139,7 @@ export type MarketStatus = {
   note: string | null
 }
 
-/** The contracts and rules a deployment speaks: `books` is StonkBrokers' Trader Book contracts. */
+/** The ABIs Mancer reads the Books contracts with. */
 export type BookAbiSet = "books"
 
 /** One curve trade, vault trade or market swap. */
@@ -1004,9 +1199,9 @@ export type BookCapabilities = {
   sellNft: boolean
   /** An NFT in the inventory, the Book not settled and not cancelled, and the feed fresh. */
   buyNft: boolean
-  /** The creator may arm. */
+  /** The dev may arm. */
   arm: boolean
-  /** The creator may cancel: armed, no buy, the curve open. */
+  /** The dev may cancel: armed, no buy, the curve open. */
   abort: boolean
   buy: boolean
   sell: boolean
@@ -1098,7 +1293,7 @@ export type BookDecodedPlan = {
 export type BookDeploymentRef = {
   factory: BooksAddress
   abiSet: BookAbiSet
-  /** `books`. */
+  /** A short name of the Books contracts. */
   label: string
 }
 
@@ -1107,8 +1302,15 @@ export type BookDeploymentView = {
   factory: BooksAddress
   label: string
   abiSet: BookAbiSet
-  /** A new Book may be opened on it. */
+  /** New Books open on it: one deployment alone. */
   opensNewBooks: boolean
+  /** What its contracts do: its pad, as a Book's `pad` names it, and its settlement, `chosen` where a trader or the dev may settle a Book in its base pair. */
+  rules?: {
+    pad?: "gen3" | "claims"
+    settlement?: "weth" | "chosen"
+  }
+  /** False where the factory's owner can list adapters and set the signer at once. */
+  bootstrapSealed?: boolean
   /** The shortest term a new Book may run, the factory's `minDurationSecs()`. */
   minDurationSecs: number | null
   /** Its contracts passed Mancer's checks. */
@@ -1170,6 +1372,8 @@ export type BookDeploymentView = {
     fixedUsd8: BooksUnits
     maxAgeSecs: number
     allowed: boolean
+    /** Where the listing is a fixed price: how far it stands from the base pair's reviewed feed now. Null where the listing reads a feed, or the feed answered no price. */
+    markVsFeed?: BookMarkVsFeed | null
   }[]
   /** The Uniswap v4 hooks a Book may name. */
   hooksAllowed: BooksAddress[]
@@ -1198,24 +1402,28 @@ export type BookDetail = {
   nameFlag: "impersonator" | null
   /** The Book's base pair. */
   quote: BookQuoteRef
+  /** The asset the Book settles in. Absent means WETH. */
+  settleAsset?: BookSettleAssetView
+  /** The Book's pad, `claims`: the one [Acting on chain](/api/guides/books/onchain) describes. */
+  pad?: "gen3" | "claims"
   venue: BookVenueState
-  /** The wallet that opened the Book. */
+  /** The Book's dev: the wallet that opened it. */
   creator: BooksAddress
   /** The Book's traders, one to eight. */
   traders: {
     address: BooksAddress
-    /** The creator's own seat, or seen confirming, cancelling or revoking on chain. */
+    /** The dev's own seat, or seen confirming, cancelling or revoking on chain. */
     acted: boolean
     /** The trader's wallet carries Mancer's verified mark now. */
     verified: boolean
     /** The trader's Ethos reading, at most 30 minutes old; null where none is held. */
     ethos: BookTraderEthos | null
   }[]
-  /** `flagged` where the creator or a trader who acted has an Ethos score under 800; else `trusted` where one carries the verified mark or an Ethos score of 1,600 or more; else `plain`. */
+  /** `flagged` where the dev or a trader who acted has an Ethos score under 800; else `trusted` where one carries the verified mark or an Ethos score of 1,600 or more; else `plain`. */
   trust: BookTrust
   /** The verified accounts' votes on the Book. */
   votes: BookVoteCounts
-  /** What its creator set of it. */
+  /** What its dev set of it. */
   profile: BookProfile
   traderCount: number
   phase: BookPhase
@@ -1244,7 +1452,7 @@ export type BookDetail = {
     /** When anyone may settle: the unlock and the 2-day grace. */
     openToAllAt: number | null
     settledAt: number | null
-    /** When its creator cancelled it. */
+    /** When its dev cancelled it. */
     cancelledAt: number | null
   }
   /** To the deadline while raising (null once an open-ended raise is past it), to the unlock while trading. */
@@ -1299,6 +1507,8 @@ export type BookDetail = {
   settlement: BookSettlementState
   /** What reached the vault in the raise, in WETH: its share of the tax and its 75% of the raise. */
   costBasisWei: BooksUnits
+  /** The pad's claim ledger for this Book, or null. */
+  padClaims?: BookPadClaims | null
   /** The Book NFT market: none yet, or open. */
   nftMarket: NftMarketState | null
 }
@@ -1320,9 +1530,12 @@ export type BookEthosLevel = "untrusted" | "questionable" | "neutral" | "known" 
 export type BookFinal = {
   /** What the vault settled for, sweeps included. */
   navTotalWei: BooksUnits
-  /** What the locked market returned to the holders' pot, in WETH. */
+  /** What the locked market returned to the holders' pot, in the settlement asset. */
   lpPotWei: BooksUnits
+  /** The cost basis in WETH wei. */
   costBasisWei: BooksUnits
+  /** The cost basis in the settlement asset, as the settler measured the profit against it: itself on a Book settled in WETH, converted at the rate fixed at the arm on one settled in its base pair. */
+  costBasisInAsset?: BooksUnits
   /** This Book's close fee, sweeps included. */
   closeFeeWei: BooksUnits | null
   closeFeeMancerWei: BooksUnits | null
@@ -1333,7 +1546,7 @@ export type BookFinal = {
   holderPotLeftWei: BooksUnits
   /** The tokens not yet redeemed, `settleOf(id).circulating`. */
   circulatingLeft: BooksUnits
-  /** What each whole token is paid on redemption, in WETH wei, fixed at settlement: all the settlement credited holders, sweeps included, over the tokens circulating then. Null where nothing circulated. */
+  /** What a whole token redeemed now is paid, in the settlement asset's units: the pot left over the tokens still circulating, or under one whole token left, all the settlement credited holders over the tokens circulating at settlement. Null where nothing circulated. */
   payoutPerTokenWei: BooksUnits | null
   /** The settlement's trading NAV (`navTotalWei`, sweeps included) over the cost basis, before the close fee and the traders' cut. The LP pot, the locked liquidity's own principal, is apart. */
   returnBps: number | null
@@ -1489,7 +1702,7 @@ export type BookLiquidationLeft = {
   valueWei: BooksUnits | null
   /** Their share of the vault's value. */
   shareOfNavBps: number | null
-  /** The traders and the creator, and when anyone may. */
+  /** The traders and the dev, and when anyone may. */
   othersWhoMaySettle: {
     traders: BooksAddress[]
     creator: BooksAddress
@@ -1514,7 +1727,7 @@ export type BookLiquidationLeg = {
 
 /** A settlement quotes request. */
 export type BookLiquidationQuotesRequest = {
-  /** The wallet that will send the transaction: a trader or the creator from the unlock, or after the 2-day grace any wallet that is not a contract. */
+  /** The wallet that will send the transaction: a trader or the dev from the unlock, or after the 2-day grace any wallet that is not a contract. */
   wallet?: Address
   /** The sales' band, 50 to 150 (100 by default). */
   slippageBps?: number
@@ -2109,7 +2322,7 @@ export type BookPolicyVerdict = {
   holdingCapBps: number | null
 }
 
-/** What a Book's creator set of it. None of it is on chain, and the targets bind what Mancer signs. */
+/** What a Book's dev set of it. None of it is on chain, and the targets bind what Mancer signs. */
 export type BookProfile = {
   /** The logo's path on the API, a new path for every change; null where none was set. */
   logo: string | null
@@ -2121,7 +2334,7 @@ export type BookProfile = {
     x: string | null
     telegram: string | null
   }
-  /** Up to 16 tokens the Book means to buy, in the creator's order. Where any are named, Mancer signs the vault's purchases into these, its base pair, WETH and USDG alone. */
+  /** Up to 16 tokens the Book means to buy, in the dev's order. Where any are named, Mancer signs the vault's purchases into these, its base pair, WETH and USDG alone. */
   targets: BooksAddress[]
   /** Unix seconds of its last change; null where nothing was ever set. */
   updatedAt: number | null
@@ -2133,10 +2346,22 @@ export type BookQuoteRef = {
   symbol: string | null
   decimals: number
   isWeth: boolean
-  /** The price now, US dollars with 8 decimals: a feed's answer, or the fixed price a listing holds. Null while the raise contract cannot read its feed (`StalePrice`). */
+  /** The price now, US dollars with 8 decimals: a feed's answer, or the fixed price a listing holds. On the raise quote, the price fixed at the arm. Null while its feed answers no fresh price. */
   usd8: BooksUnits | null
   /** Where the price comes from: `eth-usd-feed` for WETH, `usd-feed` for a listed token whose listing names a USD feed, and `fixed` for the fixed USD price a listing holds where it names none. */
   source: "eth-usd-feed" | "usd-feed" | "fixed"
+  /** On the raise quote, how far the base pair's price fixed at the arm stands from its reviewed feed now. Null where the feed answered no price. */
+  markVsFeed?: BookMarkVsFeed | null
+}
+
+/** A base pair's fixed price set beside its reviewed price feed. A Book raised in it notes its cost basis, and so its returns and the traders' cut, at the fixed price. */
+export type BookMarkVsFeed = {
+  /** The base pair's reviewed price feed. */
+  feed: BooksAddress
+  /** The feed's last answer, US dollars with 8 decimals. */
+  feedUsd8: BooksUnits
+  /** How far the fixed price stands from the feed's, in basis points of the feed's: positive where it is over. */
+  bps: number
 }
 
 /** A route in the shape `/v1/quote` serves one. */
@@ -2170,13 +2395,13 @@ export type BookRaiseQuoteResponse = {
   /** How far the trade moves the curve's price. */
   moveBps: number
   mcapUsd8After: BooksUnits | null
-  /** The buy reaches the mark at a moment the mark may close the curve: it fills in full and graduates the Book. */
+  /** The buy reaches the mark at a moment the mark may close the curve: it fills in full, graduates the Book and tries the bond in the same transaction. */
   closesCurve: boolean
   nextTaxStep: {
     at: number
     bps: number
   } | null
-  /** A sale's cap: the lesser of what the wallet bought on the curve and what it holds. */
+  /** A sale's cap: what the wallet holds (`held`, and `sellable` and `boughtOnCurve` the same), and `raiseQuote`, what the raise holds in the base pair. */
   cap: {
     boughtOnCurve: BooksUnits
     held: BooksUnits
@@ -2189,7 +2414,11 @@ export type BookRaiseQuoteResponse = {
     data: BooksHex
     value: BooksUnits
     chainId: 4663
+    /** Where the buy may bond the Book in the same transaction (`mayBond`): the gas to send it with. An estimate's gas defers the bond. */
+    gas?: BooksUnits
   } | null
+  /** The buy reaches the mark and may land once the mark can close the curve, which tries the bond in the same transaction. Send it with `tx.gas`. */
+  mayBond?: boolean
   /** The exact allowance the call needs first, with an API key; null without one, or where it needs none. */
   approval: {
     token: BooksAddress
@@ -2242,7 +2471,7 @@ export type BookRaiseState = {
   quoteToGraduate: BooksUnits | null
   /** The base pair's raw units per whole token at the curve's price. */
   pricePerTokenQuote: BooksUnits
-  /** The ETH/USD feed the raise reads. */
+  /** The pad's ETH/USD feed, which the arm reads. */
   feed: {
     ethUsd8: BooksUnits
     updatedAt: number
@@ -2263,7 +2492,7 @@ export type BookRaiseState = {
   }
   /** Not buys only, and the curve open. */
   sellsEnabled: boolean
-  /** Where the tax goes, in basis points of it: 7,500 to the vault, 833 to the creator, 833 to StonkBrokers' treasury, the rest (`remainderTo`) to the pad's StockBooster on a WETH Book, else the treasury. */
+  /** The tax's split in basis points: 7,500 to the vault, 833 to the dev, 833 to StonkBrokers less the bond bounty's fifth, the rest (`remainderTo`) to the stock booster on a WETH Book, else the treasury. */
   taxSplitBps: {
     vault: number
     creator: number
@@ -2292,6 +2521,10 @@ export type BookRaiseSummary = {
   startMcapUsd8: BooksUnits | null
   /** The opening raise tax, as the terms set it. */
   startTaxBps: number | null
+  /** The market cap in the base pair's raw units, which decides `progressBps`. */
+  mcapQuote?: BooksUnits
+  /** The mark in the base pair's raw units, fixed at the arm. */
+  gradQuote?: BooksUnits
 }
 
 /** Why a Book is not ranked. */
@@ -2320,7 +2553,10 @@ export type BookSettlementEstimate = {
   closeFeeWei: BooksUnits | null
   closeFeeMancerWei: BooksUnits | null
   closeFeeProtocolWei: BooksUnits | null
+  /** The cost basis in WETH wei. */
   costBasisWei: BooksUnits
+  /** The cost basis in the settlement asset, which `profitWei` is measured against. */
+  costBasisInAsset?: BooksUnits
   /** The value less the close fee, over the cost basis. */
   profitWei: BooksUnits
   /** The traders' cut. */
@@ -2366,6 +2602,8 @@ export type BookSettlementFinal = {
 /** The Book's settlement. */
 export type BookSettlementState = {
   liquidated: boolean
+  /** What every figure of `estimate` and `final` is counted in. Absent means WETH. */
+  asset?: BookSettleAssetView
   /** The grace after the unlock before anyone may settle: 2 days. */
   graceSecs: number
   openToAllAt: number | null
@@ -2426,13 +2664,35 @@ export type BookStepFlags = {
   graduatable: boolean
   /** The market cap reached the mark before the curve may close, an hour after the tax reaches 1%. */
   markWaitsForBondGap: boolean
-  /** The ETH/USD feed is more than 48 hours old, answers zero or less, or is stamped after the block. A WETH Book's raise stops, and a Book of another base pair cannot note its tax or bond. */
+  /** The ETH/USD feed is more than 48 hours old, answers zero or less, or is stamped after the block. An arm and the Book NFT market's moves wait for it. */
   feedStale: boolean
+}
+
+/** The asset a Book settles in. Every settlement figure of the Book (its value's and estimate's NAV, LP pot, close fee, holder pot and backing a token, its final's, a holder's payout and a trader's cut) is in this token's raw units, whatever the field's name says: the settler's `settleAssetFor`, WETH unless a trader or the dev chose the Book's base pair. */
+export type BookSettleAssetView = {
+  token: BooksAddress
+  symbol: string
+  decimals: number
+  isWeth: boolean
+  /** `chosen`: a trader or the dev picked the base pair. `default`: WETH stands. `deployment`: WETH, with no choice. */
+  source: "deployment" | "chosen" | "default"
+  /** A trader or the dev may still change it (`setSettleAsset`): a Book not quoted in WETH, until five minutes before its term ends (`unlockAt`). */
+  choosable: boolean
+}
+
+/** The pad's claim ledger for a Book: the dev's tax share accrues there in the base pair and is claimed (`padClaim`); the bond bounty is credited to whoever bonds. */
+export type BookPadClaims = {
+  /** The dev's credited and unclaimed balance of the base pair, across the raise contract's Books of that base pair. */
+  creatorClaimable: BooksUnits
+  /** What the bonder will be credited; zero once bonded. */
+  bondBounty: BooksUnits
+  /** The base pair's WETH rate fixed at the arm: WETH wei per 10^18 of its raw units. Null before the arm. */
+  ethPerQuoteE18: BooksUnits | null
 }
 
 /** One Book on the board, and the head of its page. */
 export type BookSummary = {
-  /** The creator's profile carries Mancer's verified mark now. The Book's X (`profile.links.x`) is that creator's own. */
+  /** The dev's profile carries Mancer's verified mark now. The Book's X (`profile.links.x`) is that dev's own. */
   creatorVerified?: boolean
   /** The Book token, which names the Book. */
   token: BooksAddress
@@ -2451,24 +2711,28 @@ export type BookSummary = {
   nameFlag: "impersonator" | null
   /** The Book's base pair. */
   quote: BookQuoteRef
+  /** The asset the Book settles in. Absent means WETH. */
+  settleAsset?: BookSettleAssetView
+  /** The Book's pad, `claims`: the one [Acting on chain](/api/guides/books/onchain) describes. */
+  pad?: "gen3" | "claims"
   venue: BookVenueState
-  /** The wallet that opened the Book. */
+  /** The Book's dev: the wallet that opened it. */
   creator: BooksAddress
   /** The Book's traders, one to eight. */
   traders: {
     address: BooksAddress
-    /** The creator's own seat, or seen confirming, cancelling or revoking on chain. */
+    /** The dev's own seat, or seen confirming, cancelling or revoking on chain. */
     acted: boolean
     /** The trader's wallet carries Mancer's verified mark now. */
     verified: boolean
     /** The trader's Ethos reading, at most 30 minutes old; null where none is held. */
     ethos: BookTraderEthos | null
   }[]
-  /** `flagged` where the creator or a trader who acted has an Ethos score under 800; else `trusted` where one carries the verified mark or an Ethos score of 1,600 or more; else `plain`. */
+  /** `flagged` where the dev or a trader who acted has an Ethos score under 800; else `trusted` where one carries the verified mark or an Ethos score of 1,600 or more; else `plain`. */
   trust: BookTrust
   /** The verified accounts' votes on the Book. */
   votes: BookVoteCounts
-  /** What its creator set of it. */
+  /** What its dev set of it. */
   profile: BookProfile
   traderCount: number
   phase: BookPhase
@@ -2497,7 +2761,7 @@ export type BookSummary = {
     /** When anyone may settle: the unlock and the 2-day grace. */
     openToAllAt: number | null
     settledAt: number | null
-    /** When its creator cancelled it. */
+    /** When its dev cancelled it. */
     cancelledAt: number | null
   }
   /** To the deadline while raising (null once an open-ended raise is past it), to the unlock while trading. */
@@ -2584,13 +2848,13 @@ export type BookThesesResponse = {
 
 /** One wallet's thesis on a Book. */
 export type BookThesis = {
-  /** What the voter's profile is to the Book: `trader` for a trader who acted on chain, else `creator`; null where it is not the Book's own. */
+  /** What the voter's profile is to the token: `trader` for a Book's trader who acted on chain, else `creator` for its dev; null where it is not the token's own. */
   role?: "creator" | "trader" | null
   voter: BooksAddress
   side: BookVoteSide
   /** Plain text, line breaks as `\n`. */
   text: string
-  /** The voter is the Book's own: its creator, or a trader who acted. Its vote counts in no number. */
+  /** The voter is the Book's own: its dev, or a trader who acted. Its vote counts in no number. */
   trader: boolean
   /** The voter's account carries Mancer's verified mark now. */
   verified: boolean
@@ -2620,7 +2884,7 @@ export type BookTraderBook = {
   token: BooksAddress
   name: string
   symbol: string
-  /** `creator`, `trader` (acted, not the creator), or `creator-trader`. */
+  /** `creator`, `trader` (acted, not the dev), or `creator-trader`. */
   role: "creator" | "trader" | "creator-trader"
   phase: BookPhase
   /** Trading or frozen: the vault's value less its cost basis, over the cost basis, at the Book's last reading. Null otherwise. */
@@ -2784,7 +3048,7 @@ export type BookTradesResponse = {
   tokens: BookTokenMetaMap
 }
 
-/** A Book's trust, read of its creator and the traders who acted. */
+/** A Book's trust, read of its dev and the traders who acted. */
 export type BookTrust = "trusted" | "plain" | "flagged"
 
 /** What never redeems once a Book settled: the tokens behind NFTs stuck in the market's vault and tokens sent to it, and the pot they keep. */
@@ -2823,7 +3087,7 @@ export type BookValue = {
   asOf: BooksHead
 }
 
-/** How a holding is valued: `weth`, `burned-at-settlement` (the Book's own token), `mancer-plan` (a route Mancer planned), `reference` (a reference price), or `none`. */
+/** How a holding is valued: `weth` (the settlement asset held as it is: WETH, or the base pair on a Book that settles in it), `burned-at-settlement` (the Book's own token), `mancer-plan` (a route Mancer planned), `reference` (a reference price), or `none`. */
 export type BookValueSource = "weth" | "burned-at-settlement" | "mancer-plan" | "reference" | "none"
 
 /** One token the vault tracks. */
@@ -3021,11 +3285,15 @@ export type BookVaultState = {
   /** The most it may track: 16. */
   maxTracked: number
   holdings: BookVaultHolding[]
-  /** Tokens it holds and does not track, which only a sweep sells. */
+  /** Tokens it holds and does not track. They take none of its spots, and only a sweep sells them once the Book settles. A token sent in is listed only where it is verified or an issued stock. */
   untracked: {
     token: BooksAddress
     symbol: string | null
     balance: BooksUnits
+    /** `route` where it arrived inside the vault's own trade, from its deployment's swap adapter or MancerRouter; `sent` for anything else, such as an airdrop. */
+    origin: "route" | "sent"
+    /** On Mancer's verified list. */
+    verified: boolean
   }[]
   /** The pending trade, where one waits. */
   pending: BookPendingIntent | null
@@ -3105,7 +3373,7 @@ export type BookVenueState = {
   hook: BooksAddress | null
 }
 
-/** A Book's votes: the wallets on each side that carry Mancer's verified mark now, the Book's own creator and acted traders left out. */
+/** A Book's votes: the wallets on each side that carry Mancer's verified mark now, the Book's own dev and acted traders left out. */
 export type BookVoteCounts = {
   up: number
   down: number
@@ -3172,7 +3440,7 @@ export type BookWalletRow = {
   logo: string | null
   /** The wallet's roles on the Book. */
   roles: {
-    /** The wallet acted in its seat on chain (confirmed a trade or an order, or settled the Book), or is the creator in its own seat. */
+    /** The wallet acted in its seat on chain (confirmed a trade or an order, or settled the Book), or is the dev in its own seat. */
     traderActed?: boolean
     creator: boolean
     trader: boolean
@@ -3204,8 +3472,12 @@ export type BookWalletRow = {
     amount: BooksUnits
     payoutWei: BooksUnits
   } | null
-  /** The traders' cut it is owed. */
+  /** The traders' cut it is owed, in the settlement asset. */
   cutOwedWei: BooksUnits
+  /** What `atBackingWei`, `redeemable.payoutWei` and `cutOwedWei` are counted in. Absent means WETH. */
+  settleAsset?: BookSettleAssetView
+  /** What the pad's claim ledger holds for this wallet in the Book's base pair; null where it did not read. */
+  padClaimable?: BooksUnits | null
   /** A vault trade or order that waits on this trader's confirmation. */
   pendingOnYou: {
     kind: "trade" | "order"
@@ -3445,7 +3717,7 @@ export type NftMarketAction = "open" | "wrap" | "unwrap" | "sell" | "buy-oldest"
 /** A Book with no market yet. */
 export type NftMarketNone = {
   exists: false
-  /** Who may open it: the creator, and the operator NFT's holder once it moved after settlement. */
+  /** Who may open it: the dev, and the operator NFT's holder once it moved after settlement. */
   operators: BooksAddress[]
   /** False once the Book is cancelled. */
   canOpen: boolean
@@ -3647,8 +3919,8 @@ export type AccountOrderFillData = {
 export type AccountNoticeEventData = {
   /** The notice's id in the account's inbox. */
   id: string
-  kind: "follow" | "trade" | "webhook" | "account-deletion"
-  /** Who followed, or whose trades these are; for a webhook notice, the account's own wallet; for a deletion's, the wallet that asked or cancelled. */
+  kind: "follow" | "trade" | "webhook" | "account-deletion" | "book"
+  /** Who followed, or whose trades these are; for a webhook notice, the account's own wallet; for a deletion's, the wallet that asked or cancelled; for a Book's, the Book's dev. */
   actor: Address
   /** Unix seconds: the follow's time, or the newest trade's block time. */
   at: number
@@ -3664,6 +3936,8 @@ export type AccountNoticeEventData = {
   webhook?: WebhookNotice
   /** An account deletion's notice, in place of `trade`: the request made or cancelled. */
   deletion?: DeletionNotice
+  /** A Book's notice, in place of `trade`: the Book and its step. */
+  book?: BookNotice
 }
 
 /** `book.next`, `book.pending`, `book.redeemable` and `book.cut-owed`: the Book, its phase at the block it was read at, and the kind's own fields. */
@@ -3695,10 +3969,17 @@ export type AccountBookEventData = {
   }
   /** `book.redeemable` alone: the wallet's tokens. */
   amount?: string
-  /** `book.redeemable` alone: what they redeem for, in wei. */
+  /** `book.redeemable` alone: what they redeem for, in the settlement asset's raw units (`settleAsset`). */
   payoutWei?: string
-  /** `book.cut-owed` alone: the cut owed the trader now, in wei. */
+  /** `book.cut-owed` alone: the cut owed the trader now, in the settlement asset's raw units (`settleAsset`). */
   cutOwedWei?: string
+  /** `book.redeemable` and `book.cut-owed`: the asset the amounts are in, WETH included. */
+  settleAsset?: {
+    token: BooksAddress
+    symbol: string
+    decimals: number
+    isWeth: boolean
+  }
 }
 
 export type StreamTicket = {
@@ -3871,10 +4152,10 @@ export type BookDraftsResponse = {
   drafts: BookDraft[]
 }
 
-/** One of the top creators, over the Books the board lists that were not cancelled. */
+/** One of the top devs, over the Books the board lists that were not cancelled. */
 export type BookCreatorRow = {
   address: BooksAddress
-  /** The creator carries Mancer's verified mark. */
+  /** The dev carries Mancer's verified mark. */
   verified: boolean
   books: number
   /** Raising */
@@ -3884,7 +4165,7 @@ export type BookCreatorRow = {
   valueWei: BooksUnits
   /** The best settled Book's return after the close fee and the traders' cut; null where none settled. */
   bestReturnBps: number | null
-  /** The creator's newest such Book. */
+  /** The dev's newest such Book. */
   latestBook: BooksAddress
 }
 
@@ -4158,10 +4439,10 @@ export type OwnerProfile = {
   }
   /** The fields Mancer hid on this profile. */
   hiddenByMancer: ("displayName" | "bio" | "website" | "avatar" | "banner" | "xAvatar")[]
-  /** The account's profile writes are open. */
-  open: boolean
-  /** Why the writes are open, or what would open them: `stake` (a staked Chain Mancer) or `closed`. `unread`: the stake could not be read just now. */
-  opening: "everyone" | "beta" | "staked" | "stake" | "unread" | "closed"
+  /** Always true: profile writes are open to every signed-in wallet. */
+  open: true
+  /** Always `everyone`: profile writes are open to every signed-in wallet. */
+  opening: "everyone"
   /** Whether a username claim is open, and by which, or what it needs. See `PUT /v1/me/username`. */
   usernameClaim: "everyone" | "x" | "staked" | "needs-x-or-stake" | "opened-elsewhere" | "unread"
   /** A linked wallet's request to delete the account, while one stands; null otherwise. */
@@ -4209,8 +4490,8 @@ export type UsernameAvailability = {
   /** The name as a claim reads it: trimmed, `@` dropped, lowercase. */
   username: string
   available: boolean
-  /** Why it is not available: each is its `username-` code's rule, `yours` the account's own name, `not-open` writes closed. */
-  reason?: "format" | "length" | "reserved" | "taken" | "held" | "prefix" | "staff-word" | "lookalike" | "symbol" | "x-handle" | "cooldown" | "yours" | "not-open" | "opened-elsewhere" | "needs-x-or-stake" | "unread"
+  /** Why it is not available: each is its `username-` code's rule, `yours` the account's own name. */
+  reason?: "format" | "length" | "reserved" | "taken" | "held" | "prefix" | "staff-word" | "lookalike" | "symbol" | "x-handle" | "cooldown" | "yours" | "opened-elsewhere" | "needs-x-or-stake" | "unread"
   /** When a held name frees, the account's wait ends, or an opener frees. */
   availableAt?: number
   /** The word a name may not contain. */
@@ -4287,11 +4568,11 @@ export type FeedPage = {
   nextBefore: string | null
 }
 
-/** One notification: a follow (`follow`), a trade alert (`trade`), a webhook made or paused (`webhook`), or a linked wallet's request to delete the account made or cancelled (`account-deletion`). */
+/** One notification: a follow (`follow`), a trade alert (`trade`), a webhook made or paused (`webhook`), a linked wallet's request to delete the account made or cancelled (`account-deletion`), or a step of a Book the account runs or holds (`book`). */
 export type Notice = {
   /** The notice's id, a decimal string: higher is newer. */
   id: string
-  kind: "follow" | "trade" | "webhook" | "account-deletion"
+  kind: "follow" | "trade" | "webhook" | "account-deletion" | "book"
   /** Unix seconds: the follow's time, or the newest trade's block time. */
   at: number
   /** Who followed, or whose trades these are. */
@@ -4305,6 +4586,42 @@ export type Notice = {
   webhook?: WebhookNotice
   /** An account deletion's notice: the request. Its actor is the wallet that asked or cancelled. */
   deletion?: DeletionNotice
+  /** A Book's notice: the Book and its step. Its actor is the Book's dev. */
+  book?: BookNotice
+}
+
+/** A step of a Book the account runs or holds, told once an account. `pending`: a vault trade or order waits on this trader's confirmation. `graduate`, `bond`: its dev and traders can take the step now. `ending`: trading ends in a day. `settle`: it ended, and its dev and traders can settle it now. `ended`: it ended, and anyone can settle it from `openToAllAt`. `open`: anyone can settle it now. `cut`: a trader's cut can be claimed. `redeem`: its tokens redeem for WETH. */
+export type BookNotice = {
+  book: {
+    token: Address
+    /** The name the Book is served under. */
+    name: string
+    symbol: string
+    /** The logo's path on the API, or null where its dev set none. */
+    logo: string | null
+  }
+  event: "pending" | "graduate" | "bond" | "ending" | "settle" | "ended" | "open" | "cut" | "redeem"
+  /** Whom the notice tells it as. */
+  role: "creator" | "trader" | "holder"
+  /** The wallet of the account the notice is about. */
+  wallet: Address
+  /** An act waits on the reader: the Book's page opens on its Trade section (`/books/{token}?view=trade`). */
+  act: boolean
+  /** `pending`: the vault trade or order waiting. */
+  pending?: {
+    kind: "trade" | "order"
+    digest: Hash
+  }
+  /** `ending`: unix seconds trading ends. */
+  endsAt?: number
+  /** `ended`: unix seconds anyone may settle it. */
+  openToAllAt?: number
+  /** `cut`, `redeem`: what the account's wallets claim or redeem, in WETH's wei. */
+  amountWei?: string
+  /** That in dollars when the notice was written; null where unpriced. */
+  amountUsd?: number | null
+  /** `cut`, `redeem`: a sweep grew what was told before. */
+  grown?: boolean
 }
 
 export type DeletionNotice = {
@@ -4923,6 +5240,15 @@ export type TokenKolMark = {
   tier: string
 }
 
+/** A token's dev. A Book's dev is the Book's `creator`. */
+export type TokenDev = {
+  address: Address
+  /** `assigned`: Mancer named the wallet, which beats every other source. `book`: a Book's own token, the wallet that opened it. `launchpad`: the wallet the token's launch log names, never a contract. */
+  source: "assigned" | "book" | "launchpad"
+  /** Unix seconds: the assignment, the Book's open or the token's launch; null where unknown. */
+  since: number | null
+}
+
 /** The launchpad that launched a token. */
 export type LaunchpadMark = {
   id: "mosh" | "pons" | "clanker" | "long" | "torch" | "stonklauncher"
@@ -5476,6 +5802,8 @@ export interface Operations {
       }[] | null
       createdAt?: number | null
       books?: boolean
+      /** Whether the wallet is shown perps: every wallet while perps are open, none while they are off. Shown in every region; trading is blocked where Lighter refuses the device's own address. */
+      perps?: boolean
       /** A linked wallet's request to delete the account, while one stands; null otherwise. */
       deletion?: AccountDeletionPending | null
       [key: string]: unknown
@@ -6125,6 +6453,68 @@ export interface Operations {
     query: never
     body: never
     response: OwnerProfile
+  }
+  /** Get a perp market's candles */
+  getPerpsCandles: {
+    method: "GET"
+    path: "/v1/perps/markets/{symbol}/candles"
+    pathParams: {
+      /** Lighter's market symbol, in any case: BTC, SPY, XAU. */
+      symbol: string
+    }
+    query: {
+      /** Bucket size in seconds. */
+      tf?: 60 | 300 | 900 | 1800 | 3600 | 14400 | 43200 | 86400
+      limit?: number
+      /** Unix seconds; only buckets before this time, for paging back. */
+      before?: number
+      /** `1` reads the live page again after a second rather than two, once a new candle has been heard of. */
+      fresh?: "1"
+    }
+    body: never
+    response: PerpsCandlePage
+  }
+  /** Get the perps config */
+  getPerpsConfig: {
+    method: "GET"
+    path: "/v1/perps/config"
+    pathParams: never
+    query: never
+    body: never
+    response: PerpsConfig
+  }
+  /** Build a perps deposit */
+  getPerpsDepositSteps: {
+    method: "POST"
+    path: "/v1/perps/deposits/steps"
+    pathParams: never
+    query: never
+    body: PerpsDepositStepsRequest
+    response: ReadySteps
+  }
+  /** Get a perp market */
+  getPerpsMarket: {
+    method: "GET"
+    path: "/v1/perps/markets/{symbol}"
+    pathParams: {
+      /** Lighter's market symbol, in any case: BTC, SPY, XAU. */
+      symbol: string
+    }
+    query: never
+    body: never
+    response: {
+      environment: "rh-mainnet" | "rh-testnet" | "lighter-testnet"
+      market: PerpsMarket
+    }
+  }
+  /** Build a perps withdrawal */
+  getPerpsWithdrawalSteps: {
+    method: "POST"
+    path: "/v1/perps/withdrawals/steps"
+    pathParams: never
+    query: never
+    body: PerpsWithdrawalStepsRequest
+    response: PerpsWithdrawalStepsResponse
   }
   /** Get pool candles */
   getPoolCandles: {
@@ -7218,7 +7608,7 @@ export interface Operations {
     body: never
     response: BlocksPage
   }
-  /** List top creators */
+  /** List top devs */
   listBookCreators: {
     method: "GET"
     path: "/v1/books/creators"
@@ -7250,7 +7640,7 @@ export interface Operations {
       sort?: "return" | "progress" | "timeLeft" | "newest" | "marketCap" | "votes" | "value"
       /** `asc` by default for `timeLeft`, `desc` otherwise. */
       order?: "asc" | "desc"
-      /** A name or symbol substring, or the exact address of a Book's token, vault, creator or trader. */
+      /** A name or symbol substring, or the exact address of a Book's token, vault, dev or trader. */
       q?: string
       limit?: number
       offset?: number
@@ -7335,6 +7725,22 @@ export interface Operations {
       /** True when the page hit `limit`. */
       truncated: boolean
       orders: OrderRecord[]
+    }
+  }
+  /** List perp markets */
+  listPerpsMarkets: {
+    method: "GET"
+    path: "/v1/perps/markets"
+    pathParams: never
+    query: never
+    body: never
+    response: {
+      environment: "rh-mainnet" | "rh-testnet" | "lighter-testnet"
+      markets: PerpsMarket[]
+      /** When the market details were read, in milliseconds. */
+      detailsAt: number | null
+      /** True where the market details are over three minutes old. */
+      stale: boolean
     }
   }
   /** List people you may know */
@@ -7584,7 +7990,7 @@ export interface Operations {
       links?: {
         /** One https link on a host of its own, never a social network's page; an http link or a bare host is written as https. Null clears it. */
         website?: string | null
-        /** An x.com or twitter.com link to an account, or an @handle. The profile answers the X account the creator linked through Mancer's X login. */
+        /** An x.com or twitter.com link to an account, or an @handle. The profile answers the X account the dev linked through Mancer's X login. */
         x?: string | null
         /** A t.me or telegram.me link to a name or an invite, or an @name, written `https://t.me/<path>`. Null clears it. */
         telegram?: string | null
@@ -8241,6 +8647,11 @@ export const OPERATIONS = {
   getOrdersCancelAllSteps: { method: "POST", path: "/v1/orders/cancel-all-steps", auth: "optional" },
   getOrderSetup: { method: "GET", path: "/v1/orders/setup", auth: "optional" },
   getOwnProfile: { method: "GET", path: "/v1/me/profile", auth: "required" },
+  getPerpsCandles: { method: "GET", path: "/v1/perps/markets/{symbol}/candles", auth: "none" },
+  getPerpsConfig: { method: "GET", path: "/v1/perps/config", auth: "none" },
+  getPerpsDepositSteps: { method: "POST", path: "/v1/perps/deposits/steps", auth: "optional" },
+  getPerpsMarket: { method: "GET", path: "/v1/perps/markets/{symbol}", auth: "none" },
+  getPerpsWithdrawalSteps: { method: "POST", path: "/v1/perps/withdrawals/steps", auth: "optional" },
   getPoolCandles: { method: "GET", path: "/v1/pools/{pool}/candles", auth: "none" },
   getPoolDepth: { method: "GET", path: "/v1/pools/{uid}/depth", auth: "none" },
   getPrices: { method: "GET", path: "/v1/prices", auth: "none" },
@@ -8289,6 +8700,7 @@ export const OPERATIONS = {
   listFills: { method: "GET", path: "/v1/fills", auth: "none" },
   listNotifications: { method: "GET", path: "/v1/me/notifications", auth: "required" },
   listOrders: { method: "GET", path: "/v1/orders", auth: "required" },
+  listPerpsMarkets: { method: "GET", path: "/v1/perps/markets", auth: "none" },
   listSuggestedPeople: { method: "GET", path: "/v1/me/people/suggested", auth: "required" },
   listTokenTheses: { method: "GET", path: "/v1/tokens/{address}/theses", auth: "optional" },
   listUserFollowers: { method: "GET", path: "/v1/users/{id}/followers", auth: "optional" },

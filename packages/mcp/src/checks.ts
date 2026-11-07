@@ -1,7 +1,7 @@
-import { BaseError, getAddress, type Address, type Hex } from 'viem'
+import { BaseError, encodeFunctionData, getAddress, parseAbi, type Address, type Hex } from 'viem'
 import { MancerCheckError, contractsMismatch, pinnedContracts, type CheckedSteps, type StepReading, type TrustedContracts } from '@blockhash/mancer-sdk'
 import type { ToolContext } from './tool'
-import { CHAIN_ID, ask, ToolRefusal, type UnsignedTx } from './values'
+import { CHAIN_ID, WETH, ask, ToolRefusal, type TxPrecondition, type UnsignedTx } from './values'
 
 /**
  * Every build is held to the SDK's own checks before it is answered: the ones `@blockhash/mancer-sdk`'s client runs
@@ -161,20 +161,56 @@ export function structural<T extends { simulation?: unknown }>(ready: T): T {
 }
 
 /** The transactions a check passed, as a tool answers them: the SDK's own frozen copies, never the API's objects, each with
- * what its calldata does in the check's reading and in the tool's own where it reads more. */
+ * what its calldata does in the check's reading and in the tool's own where it reads more. A step the check gave a least
+ * gas of its own (`StepReading.minGas`: a TraderBookPadV2 `graduate`, or a buy that closes the curve, which bonds the Book
+ * in the same transaction only with that gas) names at least that, whatever the API named. A settlement whose sales pay
+ * the asset a settler names (`StepReading.settlesIn`) carries the read as its `precondition`: the SDK's sender reads it
+ * right before the liquidation goes, and this server sends nothing, so the agent reads it. */
 export function transactionsOf(checked: CheckedSteps, does: (step: { kind: string; to: string; data: string; value: string }, reading: StepReading | undefined) => Record<string, unknown> | undefined = () => undefined): UnsignedTx[] {
   return checked.steps.map((s, i): UnsignedTx => {
     const step = { kind: String(s.kind), to: getAddress(String(s.to)).toLowerCase(), data: String(s.data), value: String(s.value) }
     const reading = checked.readings.find((r) => r.step === i)
     const extra = does(step, reading)
+    const floor = reading?.minGas ?? null
+    const raised = floor !== null && (s.gas === null || BigInt(String(s.gas)) < floor)
     return {
       ...step,
       chainId: CHAIN_ID,
-      gas: s.gas === null ? null : String(s.gas),
+      gas: raised ? floor!.toString() : s.gas === null ? null : String(s.gas),
       why: String(s.why ?? ''),
       does: extra ?? (reading ? { reads: reading.does } : { reads: 'nothing this server reads further' }),
+      ...(reading?.settlesIn ? { precondition: settleAssetPrecondition(reading.settlesIn) } : {}),
     }
   })
+}
+
+const SETTLE_ASSET_FOR_ABI = parseAbi(['function settleAssetFor(uint256 bookId) view returns (address)'])
+
+/**
+ * The settlement's read before it goes (finding M1's re-read): a trader or the creator may move a Book's settlement asset
+ * at the settler until its liquidation, and the liquidation then runs none of the sales Mancer signed into the asset before
+ * (each reverts `BadToken` inside it, and it settles all the same). The settler's `settleAssetFor(bookId)` must name the
+ * asset every sale pays, its zero address being WETH; where it names another, the agent sends nothing and builds again,
+ * and Mancer signs the sales into the asset it then reads.
+ */
+export function settleAssetPrecondition(s: NonNullable<StepReading['settlesIn']>): TxPrecondition {
+  return {
+    read: `settleAssetFor(${s.bookId})`,
+    call: { to: getAddress(s.settler).toLowerCase(), data: encodeFunctionData({ abi: SETTLE_ASSET_FOR_ABI, functionName: 'settleAssetFor', args: [s.bookId] }) },
+    answers: getAddress(s.pays).toLowerCase(),
+    zeroAddressIs: WETH,
+    otherwise: "Send nothing and build the settlement again: the Book now settles in another asset, and its liquidation would run none of these sales.",
+  }
+}
+
+/** A settlement's `next`: where its liquidation stands on the settler's asset (`precondition`), the read comes first, right
+ * before the send, since this server sends nothing and the sales stand five minutes, so a switch of the asset at the
+ * settler between the build and the send would leave every sale unrun. */
+export function settlementSendLine(transactions: readonly UnsignedTx[]): string {
+  const held = transactions.find((t) => t.precondition)?.precondition
+  const send = 'Sign and send each transaction in order from the wallet.'
+  if (!held) return send
+  return `Right before sending the liquidation, call ${held.read} on the settler ${held.call.to}, as its precondition says. Where it answers another asset than ${held.answers} (its zero address is WETH), send nothing and build the settlement again. ${send}`
 }
 
 export type { Address, Hex }

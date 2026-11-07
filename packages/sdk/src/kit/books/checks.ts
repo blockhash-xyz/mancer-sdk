@@ -2,7 +2,7 @@
 // Part of Mancer's contracts kit as the SDK uses it, mirrored with the rest of this repository at each release.
 import { decodeFunctionData, zeroAddress, type Address, type Hex } from 'viem'
 import { mancerRouterAbi } from '../abi'
-import { BOOK_SHARED, bookAbisFor, type BookDeployment } from './deployments'
+import { BOOK_SHARED, bookAbisFor, bookPadKind, bookSettlesInChosenAsset, type BookDeployment } from './deployments'
 import type { BookCall } from './calls'
 import type { BookQuote } from './typed-data'
 
@@ -65,11 +65,12 @@ export function curveCallMismatch(tx: BookTx, e: CurveCallExpectation): string |
   }
   const want = e.payWith === 'eth' ? 'sellEth' : 'sell'
   if (d.functionName !== want) return e.payWith === 'eth' ? 'not a sale for ETH on the curve' : "not a sale for this Book's base pair on the curve"
-  const [bookId, tokensIn, minOut] = args as [bigint, bigint, bigint]
+  const [bookId, tokensIn, minOut, recipient] = args as [bigint, bigint, bigint, Address | undefined]
   if (bookId !== e.bookId) return 'a different Book'
   if (tokensIn !== e.amountIn) return 'amount differs from the amount you entered'
   if (minOut < e.minOut) return 'floor is below the minimum shown'
   if (minOut === 0n) return 'floor is zero'
+  if (bookPadKind(e.deployment) === 'claims' && (recipient === undefined || !same(recipient, e.wallet))) return 'recipient is not your wallet'
   if (tx.value !== 0n) return 'call carries ETH for a sale'
   return null
 }
@@ -186,6 +187,8 @@ export interface LiquidationCallExpectation {
   bookId: bigint
   bookToken: Address
   quotes: readonly BookQuote[]
+
+  asset?: Address
 }
 
 export function liquidationCallMismatch(tx: BookTx, e: LiquidationCallExpectation): string | null {
@@ -203,14 +206,16 @@ export function liquidationCallMismatch(tx: BookTx, e: LiquidationCallExpectatio
   if (args[0] !== e.bookId) return 'a different Book'
   const mancer = dep.adapters.mancer?.address
   if (!mancer) return 'the deployment lists no Mancer adapter'
+  const asset = e.asset ?? BOOK_SHARED.weth
+  if (!same(asset, BOOK_SHARED.weth) && !bookSettlesInChosenAsset(dep)) return 'this settler settles every Book in WETH'
   const quotes = args[1] as readonly BookQuote[]
   if (quotes.length !== e.quotes.length) return 'not the sales shown'
   for (let i = 0; i < quotes.length; i++) {
     const q = quotes[i]!
     const shown = e.quotes[i]!
     if (!same(q.adapter, mancer)) return 'a sale is not on the Mancer adapter'
-    if (!same(q.tokenOut, BOOK_SHARED.weth)) return 'a sale does not pay WETH'
-    if (same(q.tokenIn, BOOK_SHARED.weth) || same(q.tokenIn, e.bookToken)) return 'a sale sells WETH or the Book token'
+    if (!same(q.tokenOut, asset)) return same(asset, BOOK_SHARED.weth) ? 'a sale does not pay WETH' : "a sale does not pay the Book's settlement asset"
+    if (same(q.tokenIn, asset) || same(q.tokenIn, e.bookToken)) return same(asset, BOOK_SHARED.weth) ? 'a sale sells WETH or the Book token' : "a sale sells the Book's settlement asset or the Book token"
     if (q.minOut === 0n) return 'a sale has no floor'
     if (
       !same(q.adapter, shown.adapter) || !same(q.tokenIn, shown.tokenIn) || !same(q.tokenOut, shown.tokenOut)

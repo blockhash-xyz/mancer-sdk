@@ -1,5 +1,28 @@
 import { decodeEventLog, decodeFunctionResult, erc20Abi, getAddress, hashTypedData, isAddress, keccak256, parseAbi, zeroAddress, type Abi, type Address, type Hash, type Hex, type TransactionReceipt } from 'viem'
-import { bookActCalls, bookBasePairOf, checkVaultQuote, raiseCalls, readBookRedemption, readChainBook, readVaultPending, settlementCalls, verifyBookDeployment, type BookAction, type BookActArgs, type BookRedemption, type ChainBook } from './books'
+import { bookActCalls, bookBasePairOf, bookQuoteDigest, checkVaultQuote, raiseCalls, readBookRedemption, readBookSettleAsset, readChainBook, readVaultPending, settlementCalls, settlementPaysAsset, verifyBookDeployment, type BookAction, type BookActArgs, type BookRedemption, type ChainBook } from './books'
+import {
+  BOOKS_PERPS_SEND_URL,
+  checkBookPerpsDepositQuote,
+  checkBookPerpsKeyAnswer,
+  checkBookPerpsOrderAnswer,
+  checkBookPerpsTraderKey,
+  bookPerpsDepositQuoteOf,
+  newBooksPerpsKeyContext,
+  bookPerpsPendingDepositOf,
+  readBookPerpsChain,
+  sendBookPerpsOrder,
+  bookPerpsTraderSlotOf,
+  type BookPerpsChain,
+  type BookPerpsBoundKey,
+  type BookPerpsDepositAnswer,
+  type BookPerpsKeyAnswer,
+  type BookPerpsOrderAnswer,
+  type BookPerpsOrderReport,
+  type BookPerpsOrderRequest,
+  type BookPerpsRead,
+  type BooksPerpsSend,
+  type BooksPerpsShare,
+} from './books-perps'
 import { floorBesidePool, floorKind, holdSignedFloor, namedFloor, wethUsdgPoolOut, type FloorRule, type ReferenceFn } from './floor'
 import { SDK_VERSION } from './version'
 import { executionEnvelopeMismatch, launchRouteChainMismatch, routerAllowlistDrift, safeLaunchPadLaunchIdAbi, type AllowlistDrift } from './shared'
@@ -49,12 +72,24 @@ import {
   approveCall,
   bookAbisFor,
   bookCallData,
+  bookLaunchDeployment,
+  bookPadKind,
+  bookSettlesInChosenAsset,
   cancelOrdersMessage,
   mancerOrdersV3Abi,
   orderTypedDataMismatch,
   orderTypedDataV3,
   orderV3ToSign,
   publishedSwapFeeBps,
+  LIGHTER_ENVIRONMENTS,
+  SPLIT_KINDS,
+  bookPerpsKeyAuthorization,
+  confirmTradeCall,
+  proposeTradeCall,
+  splitHexOf,
+  splitKeyHex,
+  type SplitSigned,
+  type SplitSigner,
   type BookDeployment,
   type MancerOrderV3,
   type OpenBookParams,
@@ -747,8 +782,11 @@ export class Mancer extends MancerClient {
     if (body.purpose !== 'sweep') floorKind(guard, 'book')
     const trusted = await this.trustedContracts()
     const book = await this.#book(token)
+    // a sweep sells for the Book's settlement asset, as its settler on your node names it (WETH, read from no contract,
+    // on a deployment whose settler settles every Book in WETH)
+    const asset = body.purpose === 'sweep' ? await readBookSettleAsset(this.publicClient, book) : undefined
     const answer = (await this.request<BookVaultQuoteResponse>('POST', `/v1/books/${book.token}/vault-quote`, { body: { wallet: this.wallet, ...body }, auth: 'required' })).data
-    if (checkVaultQuote(answer, body, book, trusted.router)) {
+    if (checkVaultQuote(answer, body, book, trusted.router, asset)) {
       // the floor the quote signs, held to the rule: never the answer's simulation beside it
       const q = { tokenIn: getAddress(answer.tokenIn), tokenOut: getAddress(answer.tokenOut), amountIn: BigInt(answer.amountIn) }
       await holdSignedFloor('book', guard, this.publicClient, trusted, q, BigInt(answer.minOut))
@@ -767,15 +805,32 @@ export class Mancer extends MancerClient {
   }
 
   /** The Book a token is, read from its factory on your own node, its contracts' code held to their reviewed builds, its
-   * base pair (the pad's own `quoteOf`, WETH on a WETH Book), and the raise's tax now (the pad's `currentTaxBps`). */
-  async bookOf(token: Address): Promise<ChainBook & { quote: Address; taxBps: number }> {
+   * base pair (the pad's own `quoteOf`, WETH on a WETH Book), the raise's tax now (the pad's `currentTaxBps`), its pad
+   * (`gen3`, the Books pad, or `claims`, TraderBookPadV2) and the asset it settles in (`readBookSettleAsset`: WETH unless
+   * its settler settles in the base pair and a trader or the creator chose it). */
+  async bookOf(token: Address): Promise<ChainBook & { quote: Address; taxBps: number; pad: 'gen3' | 'claims'; settleAsset: Address }> {
     const book = await this.#book(token)
     const d = book.deployment
-    const [quote, tax] = await Promise.all([
+    const [quote, tax, settleAsset] = await Promise.all([
       this.#quoteOf(book),
       this.publicClient.readContract({ address: d.pad.address, abi: bookAbisFor(d).pad as Abi, functionName: 'currentTaxBps', args: [book.bookId] }) as Promise<bigint>,
+      readBookSettleAsset(this.publicClient, book),
     ])
-    return { ...book, quote, taxBps: Number(tax) }
+    return { ...book, quote, taxBps: Number(tax), pad: bookPadKind(d), settleAsset }
+  }
+
+  /** The asset a Book settles in, as its settler on your own node names it (`readBookSettleAsset`): what its settlement's
+   * sales and sweeps pay, and its redemptions and the traders' cut. */
+  async bookSettleAsset(token: Address): Promise<Address> {
+    return readBookSettleAsset(this.publicClient, await this.#book(token))
+  }
+
+  /** The factory a new Book opens on among the deployments this client trusts (the kit's `bookLaunchDeployment`): the one
+   * a draft names (`createBookDraft`), and the one whose open `bookOpenSteps` accepts. */
+  bookLaunchFactory(): Address {
+    const d = bookLaunchDeployment(this.bookDeployments)
+    if (!d) throw new MancerCheckError('book', 'no Books deployment this client trusts opens new Books')
+    return getAddress(d.factory.address)
   }
 
   #quoteOf(book: ChainBook): Promise<Address> {
@@ -801,7 +856,7 @@ export class Mancer extends MancerClient {
 
   /** A raise trade's call, rebuilt with the kit's builders from the Book your node reads, at a floor named: the base pair
    * is the pad's `quoteOf`, and the approval is exact where your node reads the allowance short. */
-  async #raiseCall(token: Address, r: { side: 'buy' | 'sell'; amountIn: bigint; payWith?: 'eth' | 'quote' }, minOut: bigint): Promise<RaiseCall> {
+  async #raiseCall(token: Address, r: { side: 'buy' | 'sell'; amountIn: bigint; payWith?: 'eth' | 'quote'; closesCurve?: boolean; mayBond?: boolean }, minOut: bigint): Promise<RaiseCall> {
     if (r.side !== 'buy' && r.side !== 'sell') throw new MancerCheckError('book', 'a raise trade is a buy or a sale')
     if (typeof r.amountIn !== 'bigint' || r.amountIn <= 0n) throw new MancerCheckError('book', 'amountIn is raw units above zero')
     const book = await this.#book(token)
@@ -866,7 +921,12 @@ export class Mancer extends MancerClient {
     const minOut = BigInt(answer.minOut)
     if (minOut <= 0n) throw new MancerCheckError('book', "the raise quote's floor is zero")
     if (named && minOut < named.floor) throw new MancerCheckError('book', `the raise's floor, ${minOut}, is under the ${named.floor} you named`)
-    const c = await this.#raiseCall(token, r, minOut)
+    // a TraderBookPadV2 buy that closes the curve bonds the Book in the same transaction where its gas leaves the bond
+    // room, and one quoted in the seconds before `minBondAt` that reaches the mark lands after it: its step keeps the
+    // kit's bonding gas where the answer says it closes the curve or may (`mayBond`); the answer's word can only add gas,
+    // never take any away
+    const said = answer as { closesCurve?: unknown; mayBond?: unknown }
+    const c = await this.#raiseCall(token, { side: r.side, amountIn: r.amountIn, ...(r.payWith ? { payWith: r.payWith } : {}), closesCurve: said.closesCurve === true, mayBond: said.mayBond === true }, minOut)
     const checked = checkExactBookCalls('book', readyOf(answer.ready, 'book'), this.wallet, c.expected)
     return { answer, checked, book: c.book, quote: c.quote, payWith: c.payWith, minOut }
   }
@@ -875,16 +935,21 @@ export class Mancer extends MancerClient {
    * A settlement of an ended Book as checked steps (`POST /v1/books/{token}/liquidation-quotes` with `steps=1`): the
    * vault's `syncTracked` first where the answer names one, rebuilt from the tokens your node reads the vault tracking,
    * then the settler's `liquidate` rebuilt with the kit's builder from the signed sales, each sale's route held to the
-   * vault's own rules leg by leg, and the call to the kit's own liquidation check.
+   * vault's own rules leg by leg, and the call to the kit's own liquidation check. Every sale pays the asset the Book's
+   * settler names on your node: where a trader or the creator moved it after Mancer signed (at the settler directly), the
+   * sales are asked for once more, signed into the asset Mancer reads at the head, and refused where they still pay
+   * another. The sender reads the settler's word again right before the settlement goes (`StepReading.settlesIn`).
    */
   async settleSteps(token: Address, body: { slippageBps?: number } = {}): Promise<{ answer: BookLiquidationQuotesResponse; checked: CheckedSteps; book: ChainBook }> {
     const trusted = await this.trustedContracts()
     const book = await this.#book(token)
-    const answer = (await this.request<BookLiquidationQuotesResponse & { ready?: unknown }>('POST', `/v1/books/${book.token}/liquidation-quotes`, {
+    const ask = async () => (await this.request<BookLiquidationQuotesResponse & { ready?: unknown }>('POST', `/v1/books/${book.token}/liquidation-quotes`, {
       query: { steps: '1' },
       body: { wallet: this.wallet, ...(body.slippageBps !== undefined ? { slippageBps: body.slippageBps } : {}) },
       auth: 'required',
     })).data
+    let answer = await ask()
+    if (bookSettlesInChosenAsset(book.deployment) && !settlementPaysAsset(answer, await readBookSettleAsset(this.publicClient, book))) answer = await ask()
     const expected = await settlementCalls(this.publicClient, book, this.wallet, answer, trusted.router)
     const checked = checkExactBookCalls('book', readyOf((answer as { ready?: never }).ready, 'book'), this.wallet, expected)
     return { answer, checked, book }
@@ -893,7 +958,8 @@ export class Mancer extends MancerClient {
   /**
    * A Book saved before it opens (`POST /v1/books/drafts`). Its Idempotency-Key is chosen once for the body and sent
    * again by every retry of the same save until one lands, so a retry saves one draft. The draft's factory, name and
-   * ticker are kept: its open is held to them.
+   * ticker are kept: its open is held to them. A draft names the factory new Books open on (`bookLaunchFactory`): an
+   * open on any other is refused.
    */
   async createBookDraft(body: Operations['createBookDraft']['body'], idempotencyKey?: string): Promise<Operations['createBookDraft']['response']> {
     const fp = fingerprint(body)
@@ -956,6 +1022,212 @@ export class Mancer extends MancerClient {
       },
     })
     return { answer, sent, draft: await bound }
+  }
+
+  // ------------------------------------------------------------------------------------------- perps inside Books
+
+  /** `GET /v1/books/:token/perps`: a Book's perps account, its traders' split keys by slot, its value and window. */
+  async bookPerps(token: Address): Promise<BookPerpsRead> {
+    return (await this.request<BookPerpsRead>('GET', `/v1/books/${getAddress(token)}/perps`, { auth: 'optional' })).data
+  }
+
+  /** The Book and its perps as your own node reads them: the factory's Book, the perps adapter (its reviewed code), the
+   * vault's traders in the factory's order, the vault's perps account and its Lighter index. */
+  async bookPerpsChain(token: Address): Promise<{ book: ChainBook; perps: BookPerpsChain }> {
+    const book = await this.#book(token)
+    return { book, perps: await readBookPerpsChain(this.publicClient, book, this.bookPerpsDeployments) }
+  }
+
+  /**
+   * The trader's half of the vault's key at its slot, made with Mancer's vault-key service: a fresh context (Lighter RH's
+   * chain, the vault's perps account and the trader's slot as your node reads them, a random session), the half's public
+   * share and its proof (`keyGenStart`), the wallet's signature of the kit's authorization of it, `POST
+   * /v1/books/:token/perps/keys`, Mancer's answer held to what was asked (`checkBookPerpsKeyAnswer`), and the half finished with
+   * Mancer's message (`keyGenFinish`, which checks Mancer's proof): the joint key must be the answer's. Answers the share
+   * for the caller to keep (`writeBooksPerpsShare`); it is never sent. A new key at the slot is registered on Lighter by the
+   * next deposit, which carries it.
+   */
+  async bookPerpsSetupKey(token: Address, split: SplitSigner): Promise<{ share: BooksPerpsShare; key: BookPerpsBoundKey; registered: boolean | null }> {
+    const { book, perps } = await this.bookPerpsChain(token)
+    const wallet = this.wallet
+    const slot = bookPerpsTraderSlotOf(perps, wallet)
+    const chainId = LIGHTER_ENVIRONMENTS['rh-mainnet'].chainId
+    const context = newBooksPerpsKeyContext(perps.account, slot, chainId)
+    const msg = split.keyGenStart(context)
+    let finished = false
+    try {
+      const message = bookPerpsKeyAuthorization({ token: book.token, account: perps.account, chainId, slot, traderShare: splitKeyHex(msg.public), context })
+      const signature = await this.signMessage(message)
+      const answer = (await this.request<BookPerpsKeyAnswer>('POST', `/v1/books/${book.token}/perps/keys`, { body: { wallet, context, msg, signature }, auth: 'required' })).data
+      const key = checkBookPerpsKeyAnswer(answer, { slot, wallet, context, msg, message, signature })
+      finished = true
+      let done: ReturnType<SplitSigner['keyGenFinish']>
+      try {
+        done = split.keyGenFinish(context, key.mancerMsg)
+      } catch (e) {
+        throw new MancerCheckError('perps', `Mancer's half does not finish this key: ${e instanceof Error ? e.message : String(e)}`)
+      }
+      if (done.group !== splitHexOf(key.group)) {
+        split.drop(done.group)
+        throw new MancerCheckError('perps', "the joint key is not the one Mancer's answer names")
+      }
+      const share: BooksPerpsShare = {
+        v: 1, token: book.token, wallet, account: perps.account, slot, chainId, key: splitKeyHex(done.group), share: done.share, createdAt: new Date().toISOString(),
+      }
+      return { share, key, registered: answer.registered ?? null }
+    } finally {
+      // a key generation that did not finish is let go: the module keeps none open
+      if (!finished) {
+        try { split.keyGenFinish(context, msg) } catch { /* it is gone either way */ }
+      }
+    }
+  }
+
+  /** A share held to the Book, wallet, account and slot your node reads. */
+  #ownShare(share: BooksPerpsShare, book: ChainBook, perps: BookPerpsChain): number {
+    const slot = bookPerpsTraderSlotOf(perps, this.wallet)
+    if (share.token.toLowerCase() !== book.token.toLowerCase() || share.wallet.toLowerCase() !== this.wallet.toLowerCase()) throw new MancerCheckError('perps', 'the share is of another Book or wallet')
+    if (share.slot !== slot || share.account.toLowerCase() !== perps.account.toLowerCase()) throw new MancerCheckError('perps', "the share is not of this trader's slot of the vault's perps account")
+    return slot
+  }
+
+  /**
+   * A deposit of the vault's USDG to its perps account, as checked steps: `POST /v1/books/:token/perps/deposit` naming the
+   * share's key, the quote held to the amount, the perps adapter, the vault's own account and the factory's Mancer signer
+   * on your node, its route carrying no key or this client's own half plus Mancer's at the trader's slot
+   * (`checkBookPerpsDepositQuote`), no trade waiting on the vault, and the `proposeTrade` step exactly the kit's call at the vault's
+   * trade nonce. On a Book of several traders the deposit runs once every other trader confirms it.
+   */
+  async bookPerpsDepositSteps(token: Address, split: SplitSigner, share: BooksPerpsShare, amount: bigint): Promise<{ answer: BookPerpsDepositAnswer; checked: CheckedSteps; carried: boolean }> {
+    if (typeof amount !== 'bigint' || amount <= 0n) throw new MancerCheckError('perps', "amount is USDG's units above zero")
+    const { book, perps } = await this.bookPerpsChain(token)
+    const slot = this.#ownShare(share, book, perps)
+    const wallet = this.wallet
+    const answer = (await this.request<BookPerpsDepositAnswer>('POST', `/v1/books/${book.token}/perps/deposit`, { body: { wallet, amount: amount.toString(), key: share.key }, auth: 'required' })).data
+    if (!answer || answer.wallet?.toLowerCase() !== wallet.toLowerCase()) throw new MancerCheckError('perps', 'the deposit is for another wallet')
+    if (answer.account?.address?.toLowerCase() !== perps.account.toLowerCase()) throw new MancerCheckError('perps', "the deposit names another perps account than your node's")
+    const quote = bookPerpsDepositQuoteOf(answer.quote)
+    const d = book.deployment
+    const abis = bookAbisFor(d) as unknown as Record<string, Abi>
+    const read = (address: Address, abi: Abi, functionName: string, args: readonly unknown[] = []) => this.publicClient.readContract({ address, abi, functionName, args } as never) as Promise<unknown>
+    const [mancerSigner, tradeNonce, pending] = await Promise.all([
+      read(d.factory.address, abis.factory!, 'mancerSigner') as Promise<Address>,
+      read(book.vault, abis.account!, 'tradeNonce') as Promise<bigint>,
+      readVaultPending(this.publicClient, book),
+    ])
+    if (pending) throw new MancerCheckError('perps', 'a trade waits on the vault: a proposal would replace it')
+    const intent = await checkBookPerpsDepositQuote(split, {
+      quote, amount, perps: perps.perps, account: perps.account, slot, share, key: answer.key,
+      digest: bookQuoteDigest(book, quote), mancerSigner: getAddress(mancerSigner), chainNow: BigInt(Math.floor(Date.now() / 1000)), tradeNonce,
+    })
+    const checked = checkExactBookCalls('perps', answer as unknown as ReadySteps, wallet, { calls: [proposeTradeCall(d, book.vault, intent)], approval: null })
+    return { answer, checked, carried: answer.key?.carried === true }
+  }
+
+  /** A deposit to the vault's perps account, checked (`bookPerpsDepositSteps`) and sent. */
+  async bookPerpsDeposit(token: Address, split: SplitSigner, share: BooksPerpsShare, amount: bigint, options: SendOptions = {}): Promise<{ answer: BookPerpsDepositAnswer; sent: SentStep[]; carried: boolean }> {
+    const { answer, checked, carried } = await this.bookPerpsDepositSteps(token, split, share, amount)
+    return { answer, sent: await this.sendSteps(checked, options), carried }
+  }
+
+  /**
+   * A confirmation of a perps deposit another trader proposed, as checked steps: the vault's pending trade read on your node
+   * as a deposit to its own perps account; where it carries a key, the key bound for its slot (the perps read's) held to
+   * the slot's trader on your node, its wallet's signature of the kit's authorization, both proofs of possession and X =
+   * X1 + X2 (`checkBookPerpsTraderKey`); and the `confirmTrade` step exactly the kit's call of that pending trade.
+   */
+  async bookPerpsConfirmDepositSteps(token: Address, split: SplitSigner): Promise<{ answer: BookStepsResponse; checked: CheckedSteps; amount: bigint; carriesKey: boolean }> {
+    const { book, perps } = await this.bookPerpsChain(token)
+    bookPerpsTraderSlotOf(perps, this.wallet)
+    const pending = await readVaultPending(this.publicClient, book)
+    if (!pending) throw new MancerCheckError('perps', 'the vault holds no pending trade')
+    const deposit = bookPerpsPendingDepositOf(pending, perps.perps)
+    if (!deposit) throw new MancerCheckError('perps', "the pending trade is no deposit to the vault's perps account")
+    if (deposit.route.account.toLowerCase() !== perps.account.toLowerCase()) throw new MancerCheckError('perps', "the deposit's route names another account than your node's")
+    const carriesKey = deposit.route.pubKey !== '0x'
+    if (carriesKey) {
+      const read = await this.bookPerps(book.token)
+      const slot = Array.isArray(read?.keys) ? read.keys.find((k) => k.slot === deposit.route.apiKeyIndex) : undefined
+      await checkBookPerpsTraderKey(split, this.publicClient, { token: book.token, route: deposit.route, account: perps.account, traders: perps.traders, bound: slot?.bound ?? null })
+    } else if (deposit.route.apiKeyIndex !== 0) {
+      throw new MancerCheckError('perps', 'the route names a slot with no key')
+    }
+    const wallet = this.wallet
+    const answer = (await this.request<BookStepsResponse>('POST', `/v1/books/${book.token}/steps`, { body: { action: 'confirmTrade', wallet }, auth: 'required' })).data
+    const checked = checkBookSteps(answer, {
+      wallet, token: book.token, action: 'confirmTrade', bookId: book.bookId, vault: book.vault,
+      expected: { calls: [confirmTradeCall(book.deployment, book.vault, pending)], approval: null }, deployments: this.bookDeployments,
+    })
+    return { answer, checked, amount: deposit.amount, carriesKey }
+  }
+
+  /** A confirmation of a pending perps deposit, checked (`bookPerpsConfirmDepositSteps`) and sent. */
+  async bookPerpsConfirmDeposit(token: Address, split: SplitSigner, options: SendOptions = {}): Promise<{ answer: BookStepsResponse; sent: SentStep[] }> {
+    const { answer, checked } = await this.bookPerpsConfirmDepositSteps(token, split)
+    return { answer, sent: await this.sendSteps(checked, options) }
+  }
+
+  /**
+   * One order of the vault's perps account (a create, a close, a cancel, a cancel of all, a modify, a leverage or a
+   * margin), signed by this client's half and Mancer's: the share loaded, round one (`commit`), `POST
+   * /v1/books/:token/perps/orders` naming the share's key and the commitment, Mancer's answer held to exactly what was
+   * asked and to the account your node reads (`checkBookPerpsOrderAnswer`), the halves combined and verified under the joint key
+   * (`finish`, `verify`), then sent to Lighter RH's pinned `sendTx` with price protection on (`options.send` replaces the
+   * send), and Lighter's word read back through the report route (`options.report: false` skips it). A refused answer
+   * spends its round: its nonce pair is forgotten, and the share's other open rounds stand.
+   */
+  async bookPerpsOrder(
+    token: Address,
+    split: SplitSigner,
+    share: BooksPerpsShare,
+    order: BookPerpsOrderRequest,
+    options: { send?: BooksPerpsSend; report?: boolean } = {},
+  ): Promise<{ answer: BookPerpsOrderAnswer; signed: SplitSigned; txHash: string; report: BookPerpsOrderReport | null }> {
+    if (!(SPLIT_KINDS as readonly string[]).includes(order?.kind) || !order.params || typeof order.params !== 'object') throw new MancerCheckError('perps', 'an order is one of the six kinds, with its params')
+    const { book, perps } = await this.bookPerpsChain(token)
+    const slot = this.#ownShare(share, book, perps)
+    if (perps.accountIndex === null) throw new MancerCheckError('perps', 'the vault has no Lighter account yet: its first deposit makes it')
+    const accountIndex = perps.accountIndex
+    const chainId = LIGHTER_ENVIRONMENTS['rh-mainnet'].chainId
+    const group = split.load(share.share).group
+    if (splitKeyHex(group) !== share.key.toLowerCase()) throw new MancerCheckError('perps', 'the share is of another key than it names')
+    const { session, commitment } = split.commit(group)
+    const reset = () => {
+      // the round is spent: its nonce pair is forgotten, the share and its other open rounds (another order at once) kept
+      try {
+        split.forget(group, session)
+      } catch { /* the share is no longer loaded: nothing of the round is left */ }
+    }
+    let answer: BookPerpsOrderAnswer
+    let hash: string
+    try {
+      answer = (await this.request<BookPerpsOrderAnswer>('POST', `/v1/books/${book.token}/perps/orders`, { body: { wallet: this.wallet, kind: order.kind, params: order.params, key: share.key, commitment }, auth: 'required' })).data
+      hash = checkBookPerpsOrderAnswer(split, answer, { order, key: share.key, accountIndex, slot, chainId })
+      if (answer.send?.url !== BOOKS_PERPS_SEND_URL) throw new MancerCheckError('perps', 'Mancer named another address to send the order to')
+      if (answer.report?.path?.toLowerCase() !== `/v1/books/${book.token}/perps/orders/${hash}`.toLowerCase()) throw new MancerCheckError('perps', 'the report route names another order')
+    } catch (e) {
+      reset()
+      throw e
+    }
+    let signed: SplitSigned
+    try {
+      signed = split.finish(group, chainId, session, commitment, answer.tx, answer.mancer)
+      split.verify(signed.txType, signed.txInfo, chainId, group)
+    } catch (e) {
+      throw new MancerCheckError('perps', `the two halves did not make a signature Lighter takes: ${e instanceof Error ? e.message : String(e)}`)
+    }
+    if (signed.txHash.toLowerCase() !== hash) throw new MancerCheckError('perps', 'the signed transaction is another than Mancer half-signed')
+    const { txHash } = await (options.send ?? sendBookPerpsOrder)(signed, answer.expiresAt)
+    if (txHash.toLowerCase() !== hash) throw new MancerCheckError('perps', 'the send names another transaction')
+    const report = options.report === false ? null : await this.bookPerpsReport(book.token, hash)
+    return { answer, signed, txHash: hash, report }
+  }
+
+  /** `POST /v1/books/:token/perps/orders/:hash`: Lighter's word on a sent order, kept on its sign log. */
+  async bookPerpsReport(token: Address, txHash: string): Promise<BookPerpsOrderReport> {
+    const hash = txHash.toLowerCase().replace(/^0x/, '')
+    if (!/^[0-9a-f]{80}$/.test(hash)) throw new MancerCheckError('perps', 'a Lighter hash is 40 bytes of hex')
+    return (await this.request<BookPerpsOrderReport>('POST', `/v1/books/${getAddress(token)}/perps/orders/${hash}`, { auth: 'required' })).data
   }
 
   // -------------------------------------------------------------------------------------------------------- events

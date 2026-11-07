@@ -35,7 +35,7 @@ tags:
   - name: Profiles
     description: "Any wallet's public profile, its pictures and its follow lists, and the search and lookup of wallets by name."
   - name: Books
-    description: "Books: the board, a Book's page and lists, a wallet's Books, traders and creators, a Book's profile, votes and theses, and its raise and settlement helpers."
+    description: "Books: the board, a Book's page and lists, a wallet's Books, traders and devs, a Book's profile, votes and theses, and its raise and settlement helpers."
   - name: Books signing
     description: "The quotes and grants Mancer signs for a Book's vault and its settlement, asked by a wallet session for its own wallet, or from your servers by an API key Mancer enabled for Books signing that names the `wallet` sending the transaction."
   - name: Books NFT market
@@ -44,6 +44,8 @@ tags:
   - name: API keys
     x-displayName: API keys
     description: "The account's own API keys: a wallet key acts as the wallet that minted it, within its scopes, from a server alone. A session mints, changes and deletes them."
+  - name: Perps
+    description: "Perpetual futures on Lighter RH: the config a client holds to the kit, the markets and their candles, and the Robinhood Chain steps of a deposit and its exits."
   - name: System
     description: "Deployment addresses, the caller's region, and the caller's own limits."
 security:
@@ -942,7 +944,7 @@ paths:
       summary: "Get a token's vote counts"
       operationId: getTokenVotes
       security: []
-      description: "A token's up and down votes and how many theses stand on it, one a profile, the same answer for every caller. A Book's own token answers 409 `token-is-a-book`: its votes are the Book's."
+      description: "A token's up and down votes and how many theses stand on it, one a profile, the same answer for every caller. A Book's own token answers its Book's."
       parameters:
         - name: address
           in: path
@@ -955,7 +957,6 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/TokenVoteSummary" }
         "400": { description: "`bad-address`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
-        "409": { $ref: "#/components/responses/TokenIsABook" }
         "503": { $ref: "#/components/responses/TokenThesesUnavailable" }
   /v1/tokens/{address}/theses:
     get:
@@ -965,7 +966,7 @@ paths:
       security:
         - {}
         - { bearer: [] }
-      description: "The theses verified voters left with their votes on a token that is no Book, newest first, then any whose voter's mark lapsed. A thesis Mancer took down is listed nowhere."
+      description: "The theses voters left with their votes on a token: the token's own first (its dev's, and a Book's acting traders'), then verified voters', each newest first. A Book's own token lists its Book's. A thesis Mancer took down is listed nowhere."
       parameters:
         - name: address
           in: path
@@ -987,7 +988,6 @@ paths:
               schema: { $ref: "#/components/schemas/BookThesesResponse" }
         "400": { description: "`bad-address` or `bad-query`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "401": { $ref: "#/components/responses/SessionRefused" }
-        "409": { $ref: "#/components/responses/TokenIsABook" }
         "503": { $ref: "#/components/responses/TokenThesesUnavailable" }
   /v1/tokens/{address}/vote:
     put:
@@ -997,9 +997,9 @@ paths:
       security:
         - { bearer: [] }
       description: |-
-        Sets the vote of the session's profile on a token that is no Book, with a thesis or none, and answers the token's counts and that vote.
-        The profile must carry Mancer's verified mark.
-        Thirty votes an hour across Books and tokens, ten a day on one token.
+        Sets the vote of the session's profile on a token, with a thesis or none, and answers the token's counts and that vote.
+        The profile must carry Mancer's verified mark, but the token's own vote without it: its dev, and a Book's traders who acted on chain.
+        Thirty votes an hour across every token, ten a day on one.
       parameters:
         - name: address
           in: path
@@ -1026,7 +1026,7 @@ paths:
         "401": { $ref: "#/components/responses/SessionRefused" }
         "403": { description: "`vote-needs-verified`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "404": { description: "`unknown-token`: no token the index knows has this address. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
-        "409": { description: "`token-is-a-book` or `thesis-held`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "409": { description: "`thesis-held`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "429": { $ref: "#/components/responses/VotesRateLimited" }
         "503": { $ref: "#/components/responses/TokenThesesUnavailable" }
     delete:
@@ -1052,7 +1052,6 @@ paths:
               schema: { $ref: "#/components/schemas/BookVoteResponse" }
         "400": { description: "`bad-address`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "401": { $ref: "#/components/responses/SessionRefused" }
-        "409": { $ref: "#/components/responses/TokenIsABook" }
         "429": { $ref: "#/components/responses/VotesRateLimited" }
         "503": { $ref: "#/components/responses/TokenThesesUnavailable" }
   /v1/tokens/{address}/theses/{voter}/report:
@@ -1062,7 +1061,7 @@ paths:
       operationId: reportTokenThesis
       security:
         - { bearer: [] }
-      description: "Reports one voter's thesis on a token to Mancer's moderators. A repeat while the reporter's own report of it is open answers 200 with `duplicate: true`. Ten reports an hour and thirty a day, across Books and tokens."
+      description: "Reports one voter's thesis on a token to Mancer's moderators. A repeat while the reporter's own report of it is open answers 200 with `duplicate: true`. Ten reports an hour and thirty a day."
       parameters:
         - name: address
           in: path
@@ -1096,7 +1095,7 @@ paths:
         "400": { description: "`bad-address`, `bad-body`, `unknown-field`, `bad-reason`, `bad-details`, `report-self` or `idempotency-key-invalid`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "401": { $ref: "#/components/responses/SessionRefused" }
         "404": { description: "`thesis-not-found`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
-        "409": { description: "`token-is-a-book`, `idempotency-in-progress` or `idempotency-key-busy`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "409": { description: "`idempotency-in-progress` or `idempotency-key-busy`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "422": { $ref: "#/components/responses/IdempotencyKeyReused" }
         "429": { $ref: "#/components/responses/VotesRateLimited" }
         "503": { $ref: "#/components/responses/TokenThesesUnavailable" }
@@ -2864,6 +2863,210 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/StepsError" }
+  /v1/perps/config:
+    get:
+      tags: [Perps]
+      summary: "Get the perps config"
+      operationId: getPerpsConfig
+      security: []
+      description: "The Lighter environment with its URLs and signing chain id, the deposit's facts, Mancer's partner account and fee, the fee approval, the key slots, the risk Mancer takes, the launch markets and the leverage caps. Hold each to the kit before signing."
+      responses:
+        "200":
+          description: The config.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PerpsConfig" }
+        "404":
+          description: "`not-found`: perps are not open. See [Errors](/api/guides/errors)."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /v1/perps/markets:
+    get:
+      tags: [Perps]
+      summary: "List perp markets"
+      operationId: listPerpsMarkets
+      security: []
+      description: "Every perp market Lighter RH lists, the launch markets first: Mancer's class, decimals and minimums, Lighter's leverage and Mancer's cap, and the market's figures. New risk is held to the launch markets; any market's exits stay open."
+      responses:
+        "200":
+          description: The markets.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [environment, markets, detailsAt, stale]
+                properties:
+                  environment: { type: string, enum: [rh-mainnet, rh-testnet, lighter-testnet] }
+                  markets: { type: array, items: { $ref: "#/components/schemas/PerpsMarket" } }
+                  detailsAt: { type: [integer, "null"], description: "When the market details were read, in milliseconds." }
+                  stale: { type: boolean, description: "True where the market details are over three minutes old." }
+        "404":
+          description: "`not-found`: perps are not open. See [Errors](/api/guides/errors)."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          $ref: "#/components/responses/PerpsUpstreamUnavailable"
+  /v1/perps/markets/{symbol}:
+    get:
+      tags: [Perps]
+      summary: "Get a perp market"
+      operationId: getPerpsMarket
+      security: []
+      description: "One perp market by Lighter's symbol, in any case."
+      parameters:
+        - { $ref: "#/components/parameters/PerpsSymbol" }
+      responses:
+        "200":
+          description: The market.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [environment, market]
+                properties:
+                  environment: { type: string, enum: [rh-mainnet, rh-testnet, lighter-testnet] }
+                  market: { $ref: "#/components/schemas/PerpsMarket" }
+        "404":
+          description: "`perps-unknown-market`, or `not-found` where perps are not open. See [Errors](/api/guides/errors)."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          $ref: "#/components/responses/PerpsUpstreamUnavailable"
+  /v1/perps/markets/{symbol}/candles:
+    get:
+      tags: [Perps]
+      summary: "Get a perp market's candles"
+      operationId: getPerpsCandles
+      security: []
+      description: "OHLCV buckets of one perp market from Lighter, in the token candles' shape: `t` in seconds, `v` the notional in dollars. Pass `nextBefore` as `before` for older buckets."
+      parameters:
+        - { $ref: "#/components/parameters/PerpsSymbol" }
+        - name: tf
+          in: query
+          description: Bucket size in seconds.
+          schema: { type: integer, enum: [60, 300, 900, 1800, 3600, 14400, 43200, 86400], default: 300 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500, default: 400 }
+        - name: before
+          in: query
+          description: Unix seconds; only buckets before this time, for paging back.
+          schema: { type: integer }
+        - name: fresh
+          in: query
+          description: "`1` reads the live page again after a second rather than two, once a new candle has been heard of."
+          schema: { type: string, enum: ["1"] }
+      responses:
+        "200":
+          description: A page of candles.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PerpsCandlePage" }
+        "400":
+          description: "`bad-timeframe`. See [Errors](/api/guides/errors)."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: "`perps-unknown-market`, or `not-found` where perps are not open. See [Errors](/api/guides/errors)."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          $ref: "#/components/responses/PerpsUpstreamUnavailable"
+  /v1/perps/deposits/steps:
+    post:
+      tags: [Perps]
+      summary: "Build a perps deposit"
+      operationId: getPerpsDepositSteps
+      security:
+        - bearer: []
+        - {}
+      description: "The exact USDG approval of Lighter's exchange where the allowance falls short, then the deposit into the wallet's own Lighter RH account, simulated from the wallet at the head."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PerpsDepositStepsRequest" }
+            example: { wallet: "0x00000000000000000000000000000000000000a1", amount: "25000000" }
+      responses:
+        "200":
+          description: The steps.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReadySteps" }
+        "400":
+          description: "`bad-body`, `bad-wallet`, `wallet-required`, `bad-amount` or `perps-below-minimum`. See [Errors](/api/guides/errors)."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: "`not-found`: perps are not open. See [Errors](/api/guides/errors)."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: "`perps-environment`: the environment served takes no deposit on Robinhood Chain. See [Errors](/api/guides/errors)."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503":
+          description: "`perps-risk-off` (Mancer takes no new perps risk now; every exit stays open) or `steps-unavailable`. See [Errors](/api/guides/errors)."
+          headers:
+            Retry-After: { $ref: "#/components/headers/RetryAfter" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /v1/perps/withdrawals/steps:
+    post:
+      tags: [Perps]
+      summary: "Build a perps withdrawal"
+      operationId: getPerpsWithdrawalSteps
+      security:
+        - bearer: []
+        - {}
+      description: "A secure withdrawal of the wallet's Lighter RH account sent from the chain (`withdraw`), or the claim of a pending one (`claim`), simulated from the wallet at the head. An exit: never refused for the region or the risk Mancer takes, and it needs neither Lighter's API nor the device's key."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PerpsWithdrawalStepsRequest" }
+            example: { kind: withdraw, accountIndex: 4486, amount: "5000000" }
+      responses:
+        "200":
+          description: The steps.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PerpsWithdrawalStepsResponse" }
+        "400":
+          description: "`bad-body`, `bad-wallet`, `wallet-required`, `bad-amount` or `perps-below-minimum`. See [Errors](/api/guides/errors)."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: "`not-found`: perps are not open. See [Errors](/api/guides/errors)."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: "`perps-environment`: the environment served takes no withdrawal on Robinhood Chain. See [Errors](/api/guides/errors)."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503":
+          description: "`steps-unavailable`. See [Errors](/api/guides/errors)."
+          headers:
+            Retry-After: { $ref: "#/components/headers/RetryAfter" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
   /auth/nonce:
     get:
       tags: [Sign-in]
@@ -2934,7 +3137,7 @@ paths:
       operationId: getAuthMe
       security:
         - { bearer: [] }
-      description: "The wallet that signed in, the account it signed in to and every wallet that account holds, with its API keys, its profile, whether its profile writes are open, and whether it is shown Books."
+      description: "The wallet that signed in, the account it signed in to and every wallet that account holds, with its API keys, its profile, whether its profile writes are open, and whether it is shown Books and perps."
       responses:
         "200":
           description: The session's own.
@@ -2950,6 +3153,7 @@ paths:
                   wallets: { type: [array, "null"], items: { type: object, additionalProperties: true } }
                   createdAt: { type: [integer, "null"] }
                   books: { type: boolean }
+                  perps: { type: boolean, description: "Whether the wallet is shown perps: every wallet while perps are open, none while they are off. Shown in every region; trading is blocked where Lighter refuses the device's own address." }
                   deletion:
                     description: "A linked wallet's request to delete the account, while one stands; null otherwise."
                     oneOf: [{ $ref: "#/components/schemas/AccountDeletionPending" }, { type: "null" }]
@@ -3006,7 +3210,7 @@ paths:
         "401": { $ref: "#/components/responses/SessionRefused" }
         "403": { description: "`key-session-only`: a wallet key cannot renew itself into a session. `session-renew-limit`: the sign-in is more than 90 days old, and the session runs out on its own. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "429": { $ref: "#/components/responses/RateLimited" }
-        "503": { description: "`session-renew-off`: this server does not renew sessions yet. `profiles-unavailable` or `auth-unavailable`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "503": { description: "`profiles-unavailable` or `auth-unavailable`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /v1/me/wallets/link/nonce:
     post:
       tags: [Account]
@@ -3046,7 +3250,7 @@ paths:
         "409": { description: "`wallet-already-linked`, `wallets-max`, `idempotency-in-progress` or `idempotency-key-busy`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "422": { $ref: "#/components/responses/IdempotencyKeyReused" }
         "429": { description: "`link-limit` or `rate-limited`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
-        "503": { description: "`profiles-unavailable`, `profiles-not-open` or `store-unavailable`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "503": { description: "`profiles-unavailable` or `store-unavailable`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /v1/me/wallets/link:
     post:
       tags: [Account]
@@ -3082,7 +3286,7 @@ paths:
         "403": { description: "`link-signature`, `link-contract-wallet`, or `primary-wallet-only`: bringing another account in takes a session of the primary wallet. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "409": { description: "`link-choice`, `link-expired`, `link-busy`, `wallet-already-linked`, `wallet-linked-elsewhere` or `wallets-max`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { allOf: [{ $ref: "#/components/schemas/Error" }, { type: object, properties: { choices: { $ref: "#/components/schemas/WalletLinkChoices" }, max: { type: integer, const: 10 } } }] } } } }
         "429": { $ref: "#/components/responses/RateLimited" }
-        "503": { description: "`profiles-unavailable` or `profiles-not-open`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "503": { description: "`profiles-unavailable`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /v1/me/events:
     get:
       tags: [Account]
@@ -3777,7 +3981,7 @@ paths:
         "400": { description: "`bad-body`, `unknown-field`, `bad-display-name`, `display-name-length`, `display-name-blank`, `display-name-link`, `display-name-word`, `display-name-address`, `bad-bio`, `bio-length`, `bio-lines`, `bad-website`, `website-social`, `bad-avatar-source` or `bad-show-portfolio`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "401": { $ref: "#/components/responses/SessionRefused" }
         "429": { $ref: "#/components/responses/RateLimited" }
-        "503": { description: "`profiles-not-open`, which names what would open the writes, or `profiles-unavailable`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "503": { description: "`profiles-unavailable`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
     delete:
       tags: [Account]
       summary: "Delete the account's profile"
@@ -3818,7 +4022,7 @@ paths:
         "413": { description: "`picture-too-large`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "415": { description: "`picture-type`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "429": { description: "`upload-limit` or `rate-limited`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
-        "503": { description: "`picture-unavailable`, `profiles-not-open` or `profiles-unavailable`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "503": { description: "`picture-unavailable` or `profiles-unavailable`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
     delete:
       tags: [Account]
       summary: "Remove the profile's picture"
@@ -3860,7 +4064,7 @@ paths:
         "413": { description: "`picture-too-large`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "415": { description: "`picture-type`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "429": { description: "`upload-limit` or `rate-limited`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
-        "503": { description: "`picture-unavailable`, `profiles-not-open` or `profiles-unavailable`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "503": { description: "`picture-unavailable` or `profiles-unavailable`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
     delete:
       tags: [Account]
       summary: "Remove the profile's banner"
@@ -3895,7 +4099,7 @@ paths:
         "401": { $ref: "#/components/responses/SessionRefused" }
         "409": { description: "`refresh-nothing`: OpenSea has no profile for the wallet. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "429": { description: "`refresh-wait` (with `nextAt`) or `rate-limited`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
-        "503": { description: "`refresh-unavailable` (with `retryAt` where OpenSea did not answer), `profiles-not-open` or `profiles-unavailable`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "503": { description: "`refresh-unavailable` (with `retryAt` where OpenSea did not answer) or `profiles-unavailable`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /v1/me/username:
     put:
       tags: [Account]
@@ -3924,7 +4128,7 @@ paths:
         "403": { description: "`username-needs-x-or-stake`, or `username-opened-elsewhere`: what opens the claim opened another account's in the last 30 days, and the answer says when it frees. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "409": { description: "`username-taken`, `username-reserved`, `username-held` (with `availableAt`), `username-cooldown` (with `nextChangeAt`), `username-prefix`, `username-staff-word`, `username-lookalike`, `username-symbol` or `username-x-handle`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "429": { $ref: "#/components/responses/RateLimited" }
-        "503": { description: "`profiles-not-open` or `profiles-unavailable`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "503": { description: "`profiles-unavailable`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
     delete:
       tags: [Account]
       summary: "Release the username"
@@ -4022,7 +4226,7 @@ paths:
         "404": { description: "`wallet-not-linked`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "409": { description: "`primary-wallet`: the account's own wallet is always public. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "429": { $ref: "#/components/responses/RateLimited" }
-        "503": { description: "`profiles-not-open` or `profiles-unavailable`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "503": { description: "`profiles-unavailable`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
     delete:
       tags: [Account]
       summary: "Unlink a wallet"
@@ -4075,7 +4279,7 @@ paths:
         "403": { description: "`origin-refused`, `key-scope` or `key-server-only`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "409": { description: "`x-link-busy`: five links started this hour. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "429": { $ref: "#/components/responses/RateLimited" }
-        "503": { description: "`x-unavailable`, `profiles-not-open` or `profiles-unavailable`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "503": { description: "`x-unavailable` or `profiles-unavailable`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /auth/x/confirm:
     post:
       tags: [Account]
@@ -4116,7 +4320,7 @@ paths:
         "409": { description: "`x-device-used`, `x-link-denied` or `x-link-failed`: the device code's link is done, turned down, or failed. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "410": { description: "`x-device-expired`: the device code's link ran out before it was confirmed. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "429": { $ref: "#/components/responses/RateLimited" }
-        "503": { description: "`profiles-not-open` or `profiles-unavailable`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "503": { description: "`profiles-unavailable`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /auth/x/refresh:
     post:
       tags: [Account]
@@ -4136,7 +4340,7 @@ paths:
         "404": { description: "`x-not-linked`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "409": { description: "`x-refresh-wait` (with `nextAt`): X was read less than an hour ago. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "429": { $ref: "#/components/responses/RateLimited" }
-        "503": { description: "`x-unavailable` (with `retryAt` where X did not answer), `profiles-not-open` or `profiles-unavailable`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "503": { description: "`x-unavailable` (with `retryAt` where X did not answer) or `profiles-unavailable`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /auth/x:
     delete:
       tags: [Account]
@@ -4610,7 +4814,7 @@ paths:
           schema: { type: string, enum: [asc, desc] }
         - name: q
           in: query
-          description: A name or symbol substring, or the exact address of a Book's token, vault, creator or trader.
+          description: A name or symbol substring, or the exact address of a Book's token, vault, dev or trader.
           schema: { type: string, maxLength: 64 }
         - name: limit
           in: query
@@ -4688,13 +4892,13 @@ paths:
   /v1/books/creators:
     get:
       tags: [Books]
-      summary: List top creators
+      summary: List top devs
       operationId: listBookCreators
       security:
         - {}
         - { bearer: [] }
       description: |-
-        The creators of the Books the board lists, a cancelled Book counting for none: each creator's Books, live and settled, their value in ETH, its best settled return after fees, and its mark.
+        The devs of the Books the board lists, a cancelled Book counting for none: each dev's Books, live and settled, their value in ETH, its best settled return after fees, and its mark.
         The verified come first, then the most value.
       parameters:
         - name: limit
@@ -4702,7 +4906,7 @@ paths:
           schema: { type: integer, minimum: 1, maximum: 50, default: 10 }
       responses:
         "200":
-          description: The creators.
+          description: The devs.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/BooksCreatorsResponse" }
@@ -4939,7 +5143,7 @@ paths:
         "400": { $ref: "#/components/responses/BooksBadRequest" }
         "404": { $ref: "#/components/responses/BooksNotABook" }
         "409":
-          description: "`not-raising`, `book-cancelled`, `window-closed`, `window-closing`, `sells-disabled`, `sell-exceeds-curve`, `sell-exceeds-balance`, `feed-stale`, `zero-trade` or `slippage-exceeded`. See [Books errors](/api/guides/books/errors)."
+          description: "`not-raising`, `book-cancelled`, `window-closed`, `window-closing`, `sells-disabled`, `sell-exceeds-balance`, `zero-trade` or `slippage-exceeded`. See [Books errors](/api/guides/books/errors)."
           content:
             application/json:
               schema: { $ref: "#/components/schemas/BooksError" }
@@ -5011,7 +5215,7 @@ paths:
       summary: "Get a Book's logo"
       operationId: getBookLogo
       security: [{}]
-      description: "The logo the Book's creator set, as a WebP for a plain `<img>`. Use the path `profile.logo` names: it carries the logo's version, a new one for each change."
+      description: "The logo the Book's dev set, as a WebP for a plain `<img>`. Use the path `profile.logo` names: it carries the logo's version, a new one for each change."
       parameters:
         - { $ref: "#/components/parameters/BookToken" }
         - name: v
@@ -5035,10 +5239,11 @@ paths:
       tags: [Books]
       summary: "List a Book's theses"
       operationId: listBookTheses
+      deprecated: true
       security:
         - {}
         - { bearer: [] }
-      description: "The theses voters left with their votes: the Book's own first (its creator's and its acting traders'), then verified voters', each newest first. A thesis Mancer took down is listed nowhere."
+      description: "Kept for app builds already in the field: call the token route. The theses voters left with their votes on a Book: the Book's own first (its dev's and its acting traders'), then verified voters', each newest first."
       parameters:
         - { $ref: "#/components/parameters/BookToken" }
         - name: limit
@@ -5234,8 +5439,8 @@ paths:
         - { bearer: [] }
       description: |-
         Sets each field the body names, keeps the rest, and answers the Book's profile.
-        The Book's creator's session alone, from the creator wallet or any wallet of its account.
-        Targets lock once anyone but the creator buys, a buys-only raise is armed, or the Book bonds; twenty changes an hour.
+        The Book's dev's session alone, from the dev wallet or any wallet of its account.
+        Targets lock once anyone but the dev buys, a buys-only raise is armed, or the Book bonds; twenty changes an hour.
       parameters:
         - $ref: "#/components/parameters/BookToken"
       requestBody:
@@ -5253,7 +5458,7 @@ paths:
                   additionalProperties: false
                   properties:
                     website: { type: [string, "null"], description: "One https link on a host of its own, never a social network's page; an http link or a bare host is written as https. Null clears it." }
-                    x: { type: [string, "null"], description: "An x.com or twitter.com link to an account, or an @handle. The profile answers the X account the creator linked through Mancer's X login." }
+                    x: { type: [string, "null"], description: "An x.com or twitter.com link to an account, or an @handle. The profile answers the X account the dev linked through Mancer's X login." }
                     telegram: { type: [string, "null"], description: "A t.me or telegram.me link to a name or an invite, or an @name, written `https://t.me/<path>`. Null clears it." }
                 targets:
                   type: array
@@ -5283,8 +5488,8 @@ paths:
         - { bearer: [] }
       description: |-
         Sets the Book's logo from the image the body carries and answers the profile; the logo is written again as a WebP, at most 640 pixels on its long side.
-        The Book's creator's session alone.
-        Twenty logo uploads an hour across a creator's Books and saved Books.
+        The Book's dev's session alone.
+        Twenty logo uploads an hour across a dev's Books and saved Books.
       parameters:
         - $ref: "#/components/parameters/BookToken"
       requestBody:
@@ -5315,7 +5520,7 @@ paths:
         - { bearer: [] }
       description: |-
         Removes the Book's logo and answers the profile, its `logo` null.
-        The Book's creator's session alone.
+        The Book's dev's session alone.
       parameters:
         - $ref: "#/components/parameters/BookToken"
       responses:
@@ -5335,11 +5540,12 @@ paths:
       tags: [Books]
       summary: Vote on a Book
       operationId: putBookVote
+      deprecated: true
       security:
         - { bearer: [] }
       description: |-
         Sets the vote of the session's profile, with a thesis or none, replacing its earlier vote whole, and answers the Book's counts and that vote.
-        The profile must carry Mancer's verified mark, but for the Book's creator and the traders who acted.
+        The profile must carry Mancer's verified mark, but for the Book's dev and the traders who acted.
         Thirty votes an hour, ten a day on one Book.
       parameters:
         - $ref: "#/components/parameters/BookToken"
@@ -5371,6 +5577,7 @@ paths:
       tags: [Books]
       summary: Remove your vote
       operationId: deleteBookVote
+      deprecated: true
       security:
         - { bearer: [] }
       description: |-
@@ -5395,9 +5602,10 @@ paths:
       tags: [Books]
       summary: "Report a thesis"
       operationId: reportBookThesis
+      deprecated: true
       security:
         - { bearer: [] }
-      description: "Reports one voter's thesis on a Book to Mancer's moderators. A repeat while the reporter's own report of it is open answers 200 with `duplicate: true`. Ten reports an hour and thirty a day."
+      description: "Kept for app builds already in the field: call the token route. Reports one voter's thesis on a Book to Mancer's moderators."
       parameters:
         - { $ref: "#/components/parameters/BookToken" }
         - name: voter
@@ -5484,7 +5692,7 @@ paths:
       tags: [Books]
       summary: "Build the open of a saved Book"
       operationId: getBookDraftOpenSteps
-      description: "`openBook` on the saved record's factory, with its name and ticker and the terms the body names, checked against the contracts' refusals and simulated from the record's creator. `simulation.outcome.predicted` is the Book it makes. Once sent, name the open's hash with `PATCH /v1/books/drafts/{id}`."
+      description: "`openBook` on the saved record's factory, with its name and ticker and the terms the body names, checked against the contracts' refusals and simulated from the record's dev. `simulation.outcome.predicted` is the Book it makes. Once sent, name the open's hash with `PATCH /v1/books/drafts/{id}`."
       parameters:
         - name: id
           in: path
@@ -5988,7 +6196,7 @@ paths:
         "409": { description: "`keys-max`, `key-name-taken`, `idempotency-in-progress` or `idempotency-key-busy`. See [Errors](/api/guides/errors).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "422": { $ref: "#/components/responses/IdempotencyKeyReused" }
         "429": { $ref: "#/components/responses/RateLimited" }
-        "503": { description: "`self-serve-keys-off`: minting is not open yet; or `store-unavailable`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "503": { description: "`store-unavailable`. See [Errors](/api/guides/errors).", headers: { Retry-After: { $ref: "#/components/headers/RetryAfter" } }, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /v1/me/api-keys/{name}:
     parameters:
       - name: name
@@ -6155,6 +6363,13 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
+    PerpsUpstreamUnavailable:
+      description: "`perps-upstream-unavailable`: Lighter did not answer, or Mancer is at its pace of reads from it. See [Errors](/api/guides/errors)."
+      headers:
+        Retry-After: { $ref: "#/components/headers/RetryAfter" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
     BooksBadQuery:
       description: "`bad-query`. See [Books errors](/api/guides/books/errors)."
       content:
@@ -6212,18 +6427,12 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
     TokenThesesUnavailable:
-      description: "`store-unavailable`; `book-indexing`, a Book its factory opened and the index has not written yet, whose votes are the Book's once it is; or `books-state-unavailable`, the factory did not answer. See [Errors](/api/guides/errors)."
+      description: "`store-unavailable`; `book-indexing`, a Book its factory opened and the index has not written yet; `books-state-unavailable`, the factory did not answer; or `books-deployment-unverified`. See [Errors](/api/guides/errors)."
       headers:
         Retry-After: { $ref: "#/components/headers/RetryAfter" }
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
-    TokenIsABook:
-      description: "`token-is-a-book`: the token is a Book's, and `detail.book` names it; its votes and theses are the Book's routes'. See [Errors](/api/guides/errors)."
-      content:
-        application/json:
-          schema: { $ref: "#/components/schemas/Error" }
-          example: { error: "this token is a Book: its votes and theses are the Book's", code: token-is-a-book, retryable: false, detail: { book: "0x00000000000000000000000000000000000000ab" } }
     VotesRateLimited:
       description: "`votes-rate-limited` or `rate-limited`. See [Errors](/api/guides/errors)."
       headers:
@@ -6284,6 +6493,12 @@ components:
       required: true
       description: An address, or a username with or without its `@`.
       schema: { type: string }
+    PerpsSymbol:
+      name: symbol
+      in: path
+      required: true
+      description: "Lighter's market symbol, in any case: BTC, SPY, XAU."
+      schema: { type: string, pattern: "^[A-Za-z0-9]{1,16}$" }
   schemas:
     ReadyStep:
       type: object
@@ -6388,7 +6603,7 @@ components:
       properties:
         action:
           type: string
-          enum: [arm, abort, graduate, bond, proposeTrade, confirmTrade, executeTrade, cancelOrder, revokeOrders, revokeAllowance, syncTax, syncTracked, stake, unstake, claim, harvest, sweepUnowned, sweepLeftover, redeem, claimCreatorCut]
+          enum: [arm, abort, graduate, bond, proposeTrade, confirmTrade, executeTrade, cancelOrder, revokeOrders, revokeAllowance, syncTax, syncTracked, stake, unstake, claim, harvest, sweepUnowned, sweepLeftover, redeem, claimCreatorCut, padClaim, setSettleAsset]
           description: "The act. Who may send it is checked against the Book's phase and the wallet's role; [Ready-to-sign steps](/api/guides/steps) lists each act's sender."
         wallet: { $ref: "#/components/schemas/Address", description: "The wallet that sends the steps: a session's own wallet by default, which a session may override; an API key must name it (400 `wallet-required`)." }
         quote:
@@ -6400,6 +6615,8 @@ components:
         orderHash: { $ref: "#/components/schemas/Hash", description: "`cancelOrder`: the granted order's hash." }
         tokens: { type: array, maxItems: 16, items: { $ref: "#/components/schemas/Address" }, description: "`syncTracked`: the tokens to sync, the vault's tracked tokens by default." }
         amount: { type: string, description: "`stake`, `unstake` and `redeem`: raw units of the Book token, or `all` for what the wallet holds (or has staked)." }
+        unwrap: { type: boolean, description: "`padClaim`: on a WETH Book, false keeps WETH; ether by default." }
+        inQuote: { type: boolean, description: "`setSettleAsset`: true settles the Book in its base pair, false in WETH. 409 `wrong-phase` from five minutes before its term ends." }
     BookStepsResponse:
       allOf:
         - $ref: "#/components/schemas/ReadySteps"
@@ -6420,7 +6637,7 @@ components:
       type: object
       required: [terms]
       properties:
-        wallet: { $ref: "#/components/schemas/Address", description: "The record's creator, who sends the open. A session's own wallet by default." }
+        wallet: { $ref: "#/components/schemas/Address", description: "The record's dev, who sends the open. A session's own wallet by default." }
         terms:
           type: object
           description: "`openBook`'s terms beside the record's name, ticker and factory. A zero economics field takes the raise contract's default, a zero `quote` is WETH, and `venue` 0 is Uniswap v3, 1 v4."
@@ -6480,6 +6697,183 @@ components:
           required: [warnings]
           properties:
             warnings: { type: array, items: { type: string } }
+    PerpsConfig:
+      type: object
+      description: "What a client needs to act on Lighter RH through Mancer. A client checks the environment, the partner account and the fee against Mancer's contracts kit before any wallet signs."
+      required: [access, environment, deposit, partnerIndex, fee, approval, keySlots, risk, markets, attestation]
+      properties:
+        access: { type: string, enum: [public], description: "Always `public`: perps are open to every wallet wherever this answers, and the route answers 404 where they are off." }
+        environment:
+          type: object
+          required: [id, name, restUrl, wsUrl, readOnlyWsUrl, chainId]
+          properties:
+            id: { type: string, enum: [rh-mainnet, rh-testnet, lighter-testnet] }
+            name: { type: string }
+            restUrl: { type: string, description: "Lighter's REST base; every path is under `/api/v1/`." }
+            wsUrl: { type: string, description: "The WebSocket a device trades on." }
+            readOnlyWsUrl: { type: string, description: "The market-data WebSocket any region may read." }
+            chainId: { type: integer, description: "The chain id Lighter transactions and fee approvals are signed with: 466324 on RH mainnet." }
+        deposit:
+          description: "The deposit's facts on Robinhood Chain; null for a testnet, which a faucet funds."
+          oneOf:
+            - type: object
+              required: [chainId, contract, token, symbol, decimals, assetIndex, routeType, minimum, minimumWithdrawal]
+              properties:
+                chainId: { type: integer, const: 4663 }
+                contract: { $ref: "#/components/schemas/Address", description: "ZkLighter, Lighter's exchange contract." }
+                token: { $ref: "#/components/schemas/Address", description: USDG. }
+                symbol: { type: string, const: USDG }
+                decimals: { type: integer, const: 6 }
+                assetIndex: { type: integer, const: 3 }
+                routeType: { type: integer, const: 0, description: Perps collateral. }
+                minimum: { $ref: "#/components/schemas/Uint", description: "The least a deposit may be, in units: 1 USDG." }
+                minimumWithdrawal: { $ref: "#/components/schemas/Uint" }
+            - { type: "null" }
+        partnerIndex: { type: [integer, "null"], description: "Mancer's partner account on Lighter, which a fee approval names; null where none is named yet, and no deposit is built then." }
+        fee:
+          type: object
+          required: [takerPerMillion, makerPerMillion, ceilingPerMillion]
+          properties:
+            takerPerMillion: { type: integer, description: "Mancer's fee per million of a trade's notional: 500 is 0.05%." }
+            makerPerMillion: { type: integer }
+            ceilingPerMillion: { type: integer, description: "The most Mancer's fee may be: 1,000 (0.1%). Refuse a config past it." }
+        approval:
+          type: object
+          required: [maxPerpsTakerFee, maxPerpsMakerFee, maxSpotTakerFee, maxSpotMakerFee, expiryDays, renewDays]
+          properties:
+            maxPerpsTakerFee: { type: integer }
+            maxPerpsMakerFee: { type: integer }
+            maxSpotTakerFee: { type: integer, const: 0 }
+            maxSpotMakerFee: { type: integer, const: 0 }
+            expiryDays: { type: integer, description: "How long an approval of Mancer's fee lasts." }
+            renewDays: { type: integer, description: "Renew from this many days before it ends, so every resting order ends first." }
+        keySlots:
+          type: object
+          required: [site, app, held, reserved, agents]
+          properties:
+            site: { type: integer, const: 42 }
+            app: { type: integer, const: 43 }
+            held: { type: integer, const: 44 }
+            reserved: { type: array, items: { type: integer }, description: "Lighter's own apps' slots: never write them." }
+            agents:
+              type: object
+              description: The slots a bot registers its own key in.
+              required: [first, last]
+              properties:
+                first: { type: integer }
+                last: { type: integer }
+        risk:
+          type: object
+          required: [mode, setting, reason]
+          properties:
+            mode: { type: string, enum: [open, reduce-only, off], description: "Below `open`, add no risk: no deposit, no order that grows a position. Every exit stays open." }
+            setting: { type: string, enum: [open, reduce-only, off] }
+            reason: { type: [string, "null"], enum: [no-partner, null], description: "`no-partner`: no partner account is named yet." }
+        markets:
+          type: object
+          required: [launch, maxLeverage, leverageOverrides]
+          properties:
+            launch: { type: array, items: { type: string }, description: "The markets new risk is taken in, by Lighter's symbol." }
+            maxLeverage: { type: integer, description: "Mancer's leverage cap; a market's cap is the lower of this and Lighter's." }
+            leverageOverrides: { type: object, additionalProperties: { type: integer } }
+        attestation:
+          type: object
+          required: [version]
+          properties:
+            version: { type: integer, description: "The version of the words a user attests to before enabling perps." }
+    PerpsMarket:
+      type: object
+      description: "One of Lighter RH's perp markets. Prices are decimal strings in dollars; the funding is a percent of the position an hour."
+      required: [symbol, marketId, class, launch, status, frozen, reduceOnly, tradingHours, sizeDecimals, priceDecimals, quoteDecimals, minBaseAmount, minQuoteAmount, maxLeverage, leverageCap, marginFractions, lighterFee, mark, index, last, bestBid, bestAsk, change24hPct, high24h, low24h, volume24hBase, volume24hQuote, openInterest, openInterestUsd, funding, source, updatedAt]
+      properties:
+        symbol: { type: string }
+        marketId: { type: integer, description: "Lighter's market index." }
+        class: { type: string, enum: [crypto, stock, etf, commodity, pre-ipo, meme, other] }
+        launch: { type: boolean, description: "A market Mancer takes new risk in." }
+        status: { type: string }
+        frozen: { type: boolean }
+        reduceOnly: { type: boolean, description: "Lighter holds the market to orders that reduce a position." }
+        tradingHours: { type: [string, "null"], description: "Lighter's trading hours, or null where it names none." }
+        sizeDecimals: { type: integer }
+        priceDecimals: { type: integer }
+        quoteDecimals: { type: integer }
+        minBaseAmount: { type: string, description: "The least an order's size may be, in the base unit." }
+        minQuoteAmount: { type: string, description: "The least an order's notional may be, in dollars." }
+        maxLeverage: { type: integer, description: "Lighter's most leverage." }
+        leverageCap: { type: integer, description: "Mancer's cap: the lower of Lighter's and Mancer's own." }
+        marginFractions:
+          type: object
+          description: Per 10,000 of the position.
+          required: [defaultInitial, minInitial, maintenance, closeout]
+          properties:
+            defaultInitial: { type: integer }
+            minInitial: { type: integer }
+            maintenance: { type: integer }
+            closeout: { type: integer }
+        lighterFee:
+          type: object
+          description: "Lighter's base fee as its API states it."
+          required: [taker, maker]
+          properties:
+            taker: { type: string }
+            maker: { type: string }
+        mark: { type: [string, "null"] }
+        index: { type: [string, "null"] }
+        last: { type: [string, "null"] }
+        bestBid: { type: [string, "null"] }
+        bestAsk: { type: [string, "null"] }
+        change24hPct: { type: [number, "null"] }
+        high24h: { type: [number, "null"] }
+        low24h: { type: [number, "null"] }
+        volume24hBase: { type: [number, "null"] }
+        volume24hQuote: { type: [number, "null"], description: "The day's notional, in dollars." }
+        openInterest: { type: [string, "null"], description: In the base unit. }
+        openInterestUsd: { type: [string, "null"], description: In dollars. }
+        funding:
+          type: object
+          required: [hourlyPct, nextHourlyPct, lastAt, nextAt]
+          properties:
+            hourlyPct: { type: [string, "null"], description: "The funding last paid, a percent of the position an hour." }
+            nextHourlyPct: { type: [string, "null"], description: "The estimate of the next." }
+            lastAt: { type: [integer, "null"], description: "When the last was paid, in milliseconds." }
+            nextAt: { type: integer, description: "When the next is paid, in milliseconds." }
+        source: { type: string, enum: [stream, details], description: "Where the figures came from: Lighter's market stream, or its market details read each minute." }
+        updatedAt: { type: [integer, "null"], description: "When the figures were read, in milliseconds." }
+    PerpsCandlePage:
+      type: object
+      required: [symbol, marketId, tf, source, candles, hasMore]
+      properties:
+        symbol: { type: string }
+        marketId: { type: integer }
+        tf: { type: integer }
+        source: { type: string, enum: [lighter] }
+        candles:
+          type: array
+          items: { $ref: "#/components/schemas/Candle" }
+        hasMore: { type: boolean }
+        nextBefore: { type: integer, description: "Pass as `before` for the previous page." }
+        stale: { type: boolean, const: true, description: "The last page read, answered where Lighter did not answer just now: ask again in a few seconds." }
+    PerpsDepositStepsRequest:
+      type: object
+      required: [amount]
+      properties:
+        wallet: { $ref: "#/components/schemas/Address", description: "The wallet that sends and whose Lighter account is credited. A session's own by default; an API key names it." }
+        amount: { $ref: "#/components/schemas/Uint", description: "USDG's units (6 decimals), at least 1,000,000 (1 USDG)." }
+    PerpsWithdrawalStepsRequest:
+      type: object
+      required: [kind, amount]
+      properties:
+        wallet: { $ref: "#/components/schemas/Address", description: "The account's owner, who sends and is paid. A session's own by default; an API key names it." }
+        kind: { type: string, enum: [withdraw, claim], description: "`withdraw` queues a secure withdrawal from the chain; `claim` pays a pending one to the wallet." }
+        amount: { $ref: "#/components/schemas/Uint", description: "USDG's units (6 decimals); a withdrawal is 1 USDG at the least." }
+        accountIndex: { type: integer, minimum: 0, description: "`withdraw`: the wallet's Lighter account index, from Lighter's `accountsByL1Address`." }
+    PerpsWithdrawalStepsResponse:
+      allOf:
+        - $ref: "#/components/schemas/ReadySteps"
+        - type: object
+          required: [warnings]
+          properties:
+            warnings: { type: array, items: { type: string }, description: "Where Lighter lists no such account for the wallet, it says so; the steps are built all the same." }
     Address:
       type: string
       pattern: "^0x[0-9a-fA-F]{40}$"
@@ -6622,6 +7016,7 @@ components:
         - description-lines
         - description-link
         - details-too-long
+        - dev-not-a-wallet
         - display-name-address
         - display-name-blank
         - display-name-length
@@ -6716,6 +7111,7 @@ components:
         - nonce-invalid
         - not-a-book
         - not-a-collection
+        - not-a-target
         - not-a-trader
         - not-activated
         - not-an-eoa
@@ -6747,6 +7143,53 @@ components:
         - origin-refused
         - payload-too-large
         - pending-mismatch
+        - perps-above-available
+        - perps-account-index-bound
+        - perps-account-index-mismatch
+        - perps-adapter-unlisted
+        - perps-adapter-unverified
+        - perps-approvals-required
+        - perps-bad-commitment
+        - perps-bad-key-context
+        - perps-bad-key-message
+        - perps-bad-key-signature
+        - perps-bad-targets
+        - perps-below-minimum
+        - perps-client-order-index-used
+        - perps-commitment-reused
+        - perps-deposit-closed
+        - perps-environment
+        - perps-expiry-past-wind-down
+        - perps-key-closed
+        - perps-key-context-used
+        - perps-key-limit
+        - perps-key-needed
+        - perps-key-not-set
+        - perps-key-unknown
+        - perps-market-closed
+        - perps-modify-trigger
+        - perps-no-account
+        - perps-no-slot
+        - perps-nonce-live
+        - perps-nonce-unavailable
+        - perps-order-side-unknown
+        - perps-reduce-off
+        - perps-risk-off
+        - perps-session-only
+        - perps-sign-log-unavailable
+        - perps-target-unknown
+        - perps-too-far-from-mark
+        - perps-tx-unknown
+        - perps-unknown-market
+        - perps-unread
+        - perps-unsupported
+        - perps-upstream-unavailable
+        - perps-usdg-spot
+        - perps-vault-refused
+        - perps-vault-signer-stopped
+        - perps-vault-signer-unavailable
+        - perps-wind-down
+        - perps-wind-down-first
         - picture-dimensions
         - picture-empty
         - picture-forbidden
@@ -6762,7 +7205,6 @@ components:
         - primary-wallet
         - primary-wallet-only
         - profile-field-held
-        - profiles-not-open
         - profiles-unavailable
         - q-required
         - quote-assessment-stale
@@ -6792,12 +7234,10 @@ components:
         - salt-required
         - search-busy
         - search-unavailable
-        - self-serve-keys-off
         - sell-exceeds-balance
         - sell-exceeds-curve
         - sells-disabled
         - session-renew-limit
-        - session-renew-off
         - session-required
         - session-revoked
         - signature-mismatch
@@ -6832,7 +7272,6 @@ components:
         - thesis-not-found
         - tier-not-upgrade
         - timeout
-        - token-is-a-book
         - token-refused
         - token-router-refused
         - token-sell-blocked
@@ -7526,6 +7965,11 @@ components:
                 collection: { $ref: "#/components/schemas/Address" }
                 balance: { type: string, description: "The escrow's balance of the token, raw units as an integer string." }
                 tokensPerNft: { type: string, description: "The tokens one NFT trades at, raw units as an integer string." }
+            dev:
+              oneOf:
+                - $ref: "#/components/schemas/TokenDev"
+                - type: "null"
+              description: "The wallet that answers for the token: Mancer's word, else a Book's dev, else the wallet its launch log names as the one that launched it, where that is a wallet. Null where none names one, absent where it could not be read."
             agentVaults:
               type: object
               description: "A token Mosh launched: its swarm's agent vaults, which its circulating supply and market cap leave out, as Mosh's own supply figure does. Absent on every other token."
@@ -7629,7 +8073,7 @@ components:
     BookAbiSet:
       type: string
       enum: [books]
-      description: "The contracts and rules a deployment speaks: `books` is StonkBrokers' Trader Book contracts."
+      description: "The ABIs Mancer reads the Books contracts with."
     BookActivityItem:
       type: object
       description: One curve trade, vault trade or market swap.
@@ -7724,8 +8168,8 @@ components:
         unwrap: { type: boolean, description: "A market that passed its checks, and the feed fresh." }
         sellNft: { type: boolean, description: "A market that passed its checks, and the feed fresh." }
         buyNft: { type: boolean, description: "An NFT in the inventory, the Book not settled and not cancelled, and the feed fresh." }
-        arm: { type: boolean, description: The creator may arm. }
-        abort: { type: boolean, description: "The creator may cancel: armed, no buy, the curve open." }
+        arm: { type: boolean, description: The dev may arm. }
+        abort: { type: boolean, description: "The dev may cancel: armed, no buy, the curve open." }
         buy: { type: boolean }
         sell: { type: boolean }
         graduate: { type: boolean, description: Anyone may graduate. }
@@ -7820,7 +8264,7 @@ components:
       properties:
         factory: { $ref: "#/components/schemas/BooksAddress" }
         abiSet: { $ref: "#/components/schemas/BookAbiSet" }
-        label: { type: string, description: "`books`." }
+        label: { type: string, description: "A short name of the Books contracts." }
     BookDeploymentView:
       type: object
       description: One deployment of the Books contracts.
@@ -7847,7 +8291,14 @@ components:
         factory: { $ref: "#/components/schemas/BooksAddress" }
         label: { type: string }
         abiSet: { $ref: "#/components/schemas/BookAbiSet" }
-        opensNewBooks: { type: boolean, description: A new Book may be opened on it. }
+        opensNewBooks: { type: boolean, description: "New Books open on it: one deployment alone." }
+        rules:
+          type: object
+          description: "What its contracts do: its pad, as a Book's `pad` names it, and its settlement, `chosen` where a trader or the dev may settle a Book in its base pair."
+          properties:
+            pad: { type: string, enum: [gen3, claims], examples: [claims] }
+            settlement: { type: string, enum: [weth, chosen], examples: [chosen] }
+        bootstrapSealed: { type: boolean, description: "False where the factory's owner can list adapters and set the signer at once." }
         minDurationSecs: { type: [number, "null"], description: "The shortest term a new Book may run, the factory's `minDurationSecs()`." }
         verified: { type: boolean, description: Its contracts passed Mancer's checks. }
         failed:
@@ -7935,6 +8386,9 @@ components:
               fixedUsd8: { $ref: "#/components/schemas/BooksUnits" }
               maxAgeSecs: { type: number }
               allowed: { type: boolean }
+              markVsFeed:
+                description: "Where the listing is a fixed price: how far it stands from the base pair's reviewed feed now. Null where the listing reads a feed, or the feed answered no price."
+                anyOf: [{ $ref: "#/components/schemas/BookMarkVsFeed" }, { type: "null" }]
             required: [token, symbol, decimals, usdFeed, fixedUsd8, maxAgeSecs, allowed]
         hooksAllowed:
           type: array
@@ -8009,8 +8463,10 @@ components:
           enum: [impersonator, null]
           description: "`impersonator` where the Book's symbol is a verified token's symbol, or its name or symbol holds a protected name as a whole word (Mancer, StonkBrokers, TOKENIZE): such a Book is never ranked."
         quote: { $ref: "#/components/schemas/BookQuoteRef", description: The Book's base pair. }
+        settleAsset: { $ref: "#/components/schemas/BookSettleAssetView", description: "The asset the Book settles in. Absent means WETH." }
+        pad: { type: string, enum: [gen3, claims], examples: [claims], description: "The Book's pad, `claims`: the one [Acting on chain](/api/guides/books/onchain) describes." }
         venue: { $ref: "#/components/schemas/BookVenueState" }
-        creator: { $ref: "#/components/schemas/BooksAddress", description: The wallet that opened the Book. }
+        creator: { $ref: "#/components/schemas/BooksAddress", description: "The Book's dev: the wallet that opened it." }
         traders:
           type: array
           description: The Book's traders, one to eight.
@@ -8018,7 +8474,7 @@ components:
             type: object
             properties:
               address: { $ref: "#/components/schemas/BooksAddress" }
-              acted: { type: boolean, description: "The creator's own seat, or seen confirming, cancelling or revoking on chain." }
+              acted: { type: boolean, description: "The dev's own seat, or seen confirming, cancelling or revoking on chain." }
               verified: { type: boolean, description: The trader's wallet carries Mancer's verified mark now. }
               ethos:
                 description: The trader's Ethos reading, at most 30 minutes old; null where none is held.
@@ -8026,9 +8482,9 @@ components:
             required: [address, acted, verified, ethos]
         trust:
           $ref: "#/components/schemas/BookTrust"
-          description: "`flagged` where the creator or a trader who acted has an Ethos score under 800; else `trusted` where one carries the verified mark or an Ethos score of 1,600 or more; else `plain`."
+          description: "`flagged` where the dev or a trader who acted has an Ethos score under 800; else `trusted` where one carries the verified mark or an Ethos score of 1,600 or more; else `plain`."
         votes: { $ref: "#/components/schemas/BookVoteCounts", description: The verified accounts' votes on the Book. }
-        profile: { $ref: "#/components/schemas/BookProfile", description: "What its creator set of it." }
+        profile: { $ref: "#/components/schemas/BookProfile", description: "What its dev set of it." }
         traderCount: { type: number }
         phase: { $ref: "#/components/schemas/BookPhase" }
         step: { $ref: "#/components/schemas/BookStep" }
@@ -8052,7 +8508,7 @@ components:
             unlockAt: { type: [number, "null"], description: The term's end. }
             openToAllAt: { type: [number, "null"], description: "When anyone may settle: the unlock and the 2-day grace." }
             settledAt: { type: [number, "null"] }
-            cancelledAt: { type: [number, "null"], description: When its creator cancelled it. }
+            cancelledAt: { type: [number, "null"], description: When its dev cancelled it. }
         timeLeftSecs: { type: [number, "null"], description: "To the deadline while raising (null once an open-ended raise is past it), to the unlock while trading." }
         market:
           type: object
@@ -8117,6 +8573,9 @@ components:
           anyOf: [{ $ref: "#/components/schemas/BookStakeState" }, { type: "null" }]
         settlement: { $ref: "#/components/schemas/BookSettlementState" }
         costBasisWei: { $ref: "#/components/schemas/BooksUnits", description: "What reached the vault in the raise, in WETH: its share of the tax and its 75% of the raise." }
+        padClaims:
+          description: "The pad's claim ledger for this Book, or null."
+          anyOf: [{ $ref: "#/components/schemas/BookPadClaims" }, { type: "null" }]
         nftMarket:
           description: "The Book NFT market: none yet, or open."
           anyOf: [{ $ref: "#/components/schemas/NftMarketState" }, { type: "null" }]
@@ -8150,8 +8609,9 @@ components:
         - returnBps
       properties:
         navTotalWei: { $ref: "#/components/schemas/BooksUnits", description: "What the vault settled for, sweeps included." }
-        lpPotWei: { $ref: "#/components/schemas/BooksUnits", description: "What the locked market returned to the holders' pot, in WETH." }
-        costBasisWei: { $ref: "#/components/schemas/BooksUnits" }
+        lpPotWei: { $ref: "#/components/schemas/BooksUnits", description: "What the locked market returned to the holders' pot, in the settlement asset." }
+        costBasisWei: { $ref: "#/components/schemas/BooksUnits", description: The cost basis in WETH wei. }
+        costBasisInAsset: { $ref: "#/components/schemas/BooksUnits", description: "The cost basis in the settlement asset, as the settler measured the profit against it: itself on a Book settled in WETH, converted at the rate fixed at the arm on one settled in its base pair." }
         closeFeeWei:
           description: This Book's close fee, sweeps included.
           anyOf: [{ $ref: "#/components/schemas/BooksUnits" }, { type: "null" }]
@@ -8163,7 +8623,7 @@ components:
         holderPotLeftWei: { $ref: "#/components/schemas/BooksUnits", description: "What the settlement contract still holds for the holders who have not redeemed, `settleOf(id).holderPot`." }
         circulatingLeft: { $ref: "#/components/schemas/BooksUnits", description: "The tokens not yet redeemed, `settleOf(id).circulating`." }
         payoutPerTokenWei:
-          description: "What each whole token is paid on redemption, in WETH wei, fixed at settlement: all the settlement credited holders, sweeps included, over the tokens circulating then. Null where nothing circulated."
+          description: "What a whole token redeemed now is paid, in the settlement asset's units: the pot left over the tokens still circulating, or under one whole token left, all the settlement credited holders over the tokens circulating at settlement. Null where nothing circulated."
           anyOf: [{ $ref: "#/components/schemas/BooksUnits" }, { type: "null" }]
         returnBps:
           type: [number, "null"]
@@ -8401,7 +8861,7 @@ components:
         shareOfNavBps: { type: [number, "null"], description: Their share of the vault's value. }
         othersWhoMaySettle:
           type: object
-          description: The traders and the creator, and when anyone may.
+          description: The traders and the dev, and when anyone may.
           required: [traders, creator, anyoneFrom]
           properties:
             traders:
@@ -8431,7 +8891,7 @@ components:
       properties:
         wallet:
           $ref: "#/components/schemas/Address"
-          description: "The wallet that will send the transaction: a trader or the creator from the unlock, or after the 2-day grace any wallet that is not a contract."
+          description: "The wallet that will send the transaction: a trader or the dev from the unlock, or after the 2-day grace any wallet that is not a contract."
         slippageBps: { type: number, description: "The sales' band, 50 to 150 (100 by default)." }
     BookLiquidationQuotesResponse:
       type: object
@@ -9247,7 +9707,7 @@ components:
         holdingCapBps: { type: [number, "null"], description: The most of the vault's value it may hold of the token; null where no cap applies. }
     BookProfile:
       type: object
-      description: "What a Book's creator set of it. None of it is on chain, and the targets bind what Mancer signs."
+      description: "What a Book's dev set of it. None of it is on chain, and the targets bind what Mancer signs."
       required: [logo, description, links, targets, updatedAt]
       properties:
         logo: { type: [string, "null"], description: "The logo's path on the API, a new path for every change; null where none was set." }
@@ -9262,7 +9722,7 @@ components:
             telegram: { type: [string, "null"] }
         targets:
           type: array
-          description: Up to 16 tokens the Book means to buy, in the creator's order. Where any are named, Mancer signs the vault's purchases into these, its base pair, WETH and USDG alone.
+          description: Up to 16 tokens the Book means to buy, in the dev's order. Where any are named, Mancer signs the vault's purchases into these, its base pair, WETH and USDG alone.
           items: { $ref: "#/components/schemas/BooksAddress" }
         updatedAt: { type: [number, "null"], description: Unix seconds of its last change; null where nothing was ever set. }
     BookQuoteRef:
@@ -9275,12 +9735,23 @@ components:
         decimals: { type: number }
         isWeth: { type: boolean }
         usd8:
-          description: "The price now, US dollars with 8 decimals: a feed's answer, or the fixed price a listing holds. Null while the raise contract cannot read its feed (`StalePrice`)."
+          description: "The price now, US dollars with 8 decimals: a feed's answer, or the fixed price a listing holds. On the raise quote, the price fixed at the arm. Null while its feed answers no fresh price."
           anyOf: [{ $ref: "#/components/schemas/BooksUnits" }, { type: "null" }]
         source:
           type: string
           enum: [eth-usd-feed, usd-feed, fixed]
           description: "Where the price comes from: `eth-usd-feed` for WETH, `usd-feed` for a listed token whose listing names a USD feed, and `fixed` for the fixed USD price a listing holds where it names none."
+        markVsFeed:
+          description: "On the raise quote, how far the base pair's price fixed at the arm stands from its reviewed feed now. Null where the feed answered no price."
+          anyOf: [{ $ref: "#/components/schemas/BookMarkVsFeed" }, { type: "null" }]
+    BookMarkVsFeed:
+      type: object
+      description: "A base pair's fixed price set beside its reviewed price feed. A Book raised in it notes its cost basis, and so its returns and the traders' cut, at the fixed price."
+      required: [feed, feedUsd8, bps]
+      properties:
+        feed: { $ref: "#/components/schemas/BooksAddress", description: "The base pair's reviewed price feed." }
+        feedUsd8: { $ref: "#/components/schemas/BooksUnits", description: "The feed's last answer, US dollars with 8 decimals." }
+        bps: { type: number, description: "How far the fixed price stands from the feed's, in basis points of the feed's: positive where it is over." }
     BookQuoteRoute:
       type: object
       description: A route in the shape `/v1/quote` serves one.
@@ -9330,7 +9801,7 @@ components:
         moveBps: { type: number, description: How far the trade moves the curve's price. }
         mcapUsd8After:
           anyOf: [{ $ref: "#/components/schemas/BooksUnits" }, { type: "null" }]
-        closesCurve: { type: boolean, description: "The buy reaches the mark at a moment the mark may close the curve: it fills in full and graduates the Book." }
+        closesCurve: { type: boolean, description: "The buy reaches the mark at a moment the mark may close the curve: it fills in full, graduates the Book and tries the bond in the same transaction." }
         nextTaxStep:
           anyOf:
             - type: object
@@ -9340,7 +9811,7 @@ components:
               required: [at, bps]
             - { type: "null" }
         cap:
-          description: "A sale's cap: the lesser of what the wallet bought on the curve and what it holds."
+          description: "A sale's cap: what the wallet holds (`held`, and `sellable` and `boughtOnCurve` the same), and `raiseQuote`, what the raise holds in the base pair."
           anyOf:
             - type: object
               properties:
@@ -9359,8 +9830,10 @@ components:
                 data: { $ref: "#/components/schemas/BooksHex" }
                 value: { $ref: "#/components/schemas/BooksUnits" }
                 chainId: { type: number, const: 4663 }
+                gas: { $ref: "#/components/schemas/BooksUnits", description: "Where the buy may bond the Book in the same transaction (`mayBond`): the gas to send it with. An estimate's gas defers the bond." }
               required: [to, data, value, chainId]
             - { type: "null" }
+        mayBond: { type: boolean, description: "The buy reaches the mark and may land once the mark can close the curve, which tries the bond in the same transaction. Send it with `tx.gas`." }
         approval:
           description: The exact allowance the call needs first, with an API key; null without one, or where it needs none.
           anyOf:
@@ -9442,7 +9915,7 @@ components:
         pricePerTokenQuote: { $ref: "#/components/schemas/BooksUnits", description: The base pair's raw units per whole token at the curve's price. }
         feed:
           type: object
-          description: The ETH/USD feed the raise reads.
+          description: The pad's ETH/USD feed, which the arm reads.
           required: [ethUsd8, updatedAt, stale]
           properties:
             ethUsd8: { $ref: "#/components/schemas/BooksUnits" }
@@ -9469,7 +9942,7 @@ components:
         sellsEnabled: { type: boolean, description: "Not buys only, and the curve open." }
         taxSplitBps:
           type: object
-          description: "Where the tax goes, in basis points of it: 7,500 to the vault, 833 to the creator, 833 to StonkBrokers' treasury, the rest (`remainderTo`) to the pad's StockBooster on a WETH Book, else the treasury."
+          description: "The tax's split in basis points: 7,500 to the vault, 833 to the dev, 833 to StonkBrokers less the bond bounty's fifth, the rest (`remainderTo`) to the stock booster on a WETH Book, else the treasury."
           required: [vault, creator, protocol, remainder, remainderTo]
           properties:
             vault: { type: number }
@@ -9497,6 +9970,8 @@ components:
           description: The opening market cap, as the terms set it.
           anyOf: [{ $ref: "#/components/schemas/BooksUnits" }, { type: "null" }]
         startTaxBps: { type: [number, "null"], description: "The opening raise tax, as the terms set it." }
+        mcapQuote: { $ref: "#/components/schemas/BooksUnits", description: "The market cap in the base pair's raw units, which decides `progressBps`." }
+        gradQuote: { $ref: "#/components/schemas/BooksUnits", description: "The mark in the base pair's raw units, fixed at the arm." }
     BookRankWhy:
       type: string
       enum: [raise-under-floor, name-flagged, no-trader-acted]
@@ -9547,7 +10022,8 @@ components:
           anyOf: [{ $ref: "#/components/schemas/BooksUnits" }, { type: "null" }]
         closeFeeProtocolWei:
           anyOf: [{ $ref: "#/components/schemas/BooksUnits" }, { type: "null" }]
-        costBasisWei: { $ref: "#/components/schemas/BooksUnits" }
+        costBasisWei: { $ref: "#/components/schemas/BooksUnits", description: The cost basis in WETH wei. }
+        costBasisInAsset: { $ref: "#/components/schemas/BooksUnits", description: "The cost basis in the settlement asset, which `profitWei` is measured against." }
         profitWei: { $ref: "#/components/schemas/BooksUnits", description: "The value less the close fee, over the cost basis." }
         creatorCutWei: { $ref: "#/components/schemas/BooksUnits", description: The traders' cut. }
         holderPotWei: { $ref: "#/components/schemas/BooksUnits" }
@@ -9612,6 +10088,7 @@ components:
       required: [liquidated, graceSecs, openToAllAt, estimate, final]
       properties:
         liquidated: { type: boolean }
+        asset: { $ref: "#/components/schemas/BookSettleAssetView", description: "What every figure of `estimate` and `final` is counted in. Absent means WETH." }
         graceSecs: { type: number, description: "The grace after the unlock before anyone may settle: 2 days." }
         openToAllAt: { type: [number, "null"] }
         estimate:
@@ -9674,7 +10151,28 @@ components:
         pastWindow: { type: boolean, description: "An open-ended raise past its window: still raising, at the falling tax." }
         graduatable: { type: boolean, description: "The market cap reached the mark while the curve is open, and the curve may close: anyone may graduate the Book." }
         markWaitsForBondGap: { type: boolean, description: "The market cap reached the mark before the curve may close, an hour after the tax reaches 1%." }
-        feedStale: { type: boolean, description: "The ETH/USD feed is more than 48 hours old, answers zero or less, or is stamped after the block. A WETH Book's raise stops, and a Book of another base pair cannot note its tax or bond." }
+        feedStale: { type: boolean, description: "The ETH/USD feed is more than 48 hours old, answers zero or less, or is stamped after the block. An arm and the Book NFT market's moves wait for it." }
+    BookSettleAssetView:
+      type: object
+      description: "The asset a Book settles in. Every settlement figure of the Book (its value's and estimate's NAV, LP pot, close fee, holder pot and backing a token, its final's, a holder's payout and a trader's cut) is in this token's raw units, whatever the field's name says: the settler's `settleAssetFor`, WETH unless a trader or the dev chose the Book's base pair."
+      required: [token, symbol, decimals, isWeth, source, choosable]
+      properties:
+        token: { $ref: "#/components/schemas/BooksAddress" }
+        symbol: { type: string }
+        decimals: { type: number }
+        isWeth: { type: boolean }
+        source: { type: string, enum: [deployment, chosen, default], examples: [default], description: "`chosen`: a trader or the dev picked the base pair. `default`: WETH stands. `deployment`: WETH, with no choice." }
+        choosable: { type: boolean, description: "A trader or the dev may still change it (`setSettleAsset`): a Book not quoted in WETH, until five minutes before its term ends (`unlockAt`)." }
+    BookPadClaims:
+      type: object
+      description: "The pad's claim ledger for a Book: the dev's tax share accrues there in the base pair and is claimed (`padClaim`); the bond bounty is credited to whoever bonds."
+      required: [creatorClaimable, bondBounty, ethPerQuoteE18]
+      properties:
+        creatorClaimable: { $ref: "#/components/schemas/BooksUnits", description: "The dev's credited and unclaimed balance of the base pair, across the raise contract's Books of that base pair." }
+        bondBounty: { $ref: "#/components/schemas/BooksUnits", description: "What the bonder will be credited; zero once bonded." }
+        ethPerQuoteE18:
+          description: "The base pair's WETH rate fixed at the arm: WETH wei per 10^18 of its raw units. Null before the arm."
+          anyOf: [{ $ref: "#/components/schemas/BooksUnits" }, { type: "null" }]
     BookSummary:
       type: object
       description: One Book on the board, and the head of its page.
@@ -9714,7 +10212,7 @@ components:
         - holdings
         - nftMarket
       properties:
-        creatorVerified: { type: boolean, description: "The creator's profile carries Mancer's verified mark now. The Book's X (`profile.links.x`) is that creator's own." }
+        creatorVerified: { type: boolean, description: "The dev's profile carries Mancer's verified mark now. The Book's X (`profile.links.x`) is that dev's own." }
         token: { $ref: "#/components/schemas/BooksAddress", description: "The Book token, which names the Book." }
         deployment: { $ref: "#/components/schemas/BookDeploymentRef" }
         bookId: { type: string, description: "The Book's id on its deployment. Name a Book by its token." }
@@ -9728,8 +10226,10 @@ components:
           enum: [impersonator, null]
           description: "`impersonator` where the Book's symbol is a verified token's symbol, or its name or symbol holds a protected name as a whole word (Mancer, StonkBrokers, TOKENIZE): such a Book is never ranked."
         quote: { $ref: "#/components/schemas/BookQuoteRef", description: The Book's base pair. }
+        settleAsset: { $ref: "#/components/schemas/BookSettleAssetView", description: "The asset the Book settles in. Absent means WETH." }
+        pad: { type: string, enum: [gen3, claims], examples: [claims], description: "The Book's pad, `claims`: the one [Acting on chain](/api/guides/books/onchain) describes." }
         venue: { $ref: "#/components/schemas/BookVenueState" }
-        creator: { $ref: "#/components/schemas/BooksAddress", description: The wallet that opened the Book. }
+        creator: { $ref: "#/components/schemas/BooksAddress", description: "The Book's dev: the wallet that opened it." }
         traders:
           type: array
           description: The Book's traders, one to eight.
@@ -9737,7 +10237,7 @@ components:
             type: object
             properties:
               address: { $ref: "#/components/schemas/BooksAddress" }
-              acted: { type: boolean, description: "The creator's own seat, or seen confirming, cancelling or revoking on chain." }
+              acted: { type: boolean, description: "The dev's own seat, or seen confirming, cancelling or revoking on chain." }
               verified: { type: boolean, description: The trader's wallet carries Mancer's verified mark now. }
               ethos:
                 description: The trader's Ethos reading, at most 30 minutes old; null where none is held.
@@ -9745,9 +10245,9 @@ components:
             required: [address, acted, verified, ethos]
         trust:
           $ref: "#/components/schemas/BookTrust"
-          description: "`flagged` where the creator or a trader who acted has an Ethos score under 800; else `trusted` where one carries the verified mark or an Ethos score of 1,600 or more; else `plain`."
+          description: "`flagged` where the dev or a trader who acted has an Ethos score under 800; else `trusted` where one carries the verified mark or an Ethos score of 1,600 or more; else `plain`."
         votes: { $ref: "#/components/schemas/BookVoteCounts", description: The verified accounts' votes on the Book. }
-        profile: { $ref: "#/components/schemas/BookProfile", description: "What its creator set of it." }
+        profile: { $ref: "#/components/schemas/BookProfile", description: "What its dev set of it." }
         traderCount: { type: number }
         phase: { $ref: "#/components/schemas/BookPhase" }
         step: { $ref: "#/components/schemas/BookStep" }
@@ -9771,7 +10271,7 @@ components:
             unlockAt: { type: [number, "null"], description: The term's end. }
             openToAllAt: { type: [number, "null"], description: "When anyone may settle: the unlock and the 2-day grace." }
             settledAt: { type: [number, "null"] }
-            cancelledAt: { type: [number, "null"], description: When its creator cancelled it. }
+            cancelledAt: { type: [number, "null"], description: When its dev cancelled it. }
         timeLeftSecs: { type: [number, "null"], description: "To the deadline while raising (null once an open-ended raise is past it), to the unlock while trading." }
         raise:
           description: The raise while the Book waits, raises or has graduated; null after.
@@ -9882,11 +10382,11 @@ components:
       description: One wallet's thesis on a Book.
       required: [voter, side, text, trader, verified, at]
       properties:
-        role: { type: [string, "null"], enum: [creator, trader, null], description: "What the voter's profile is to the Book: `trader` for a trader who acted on chain, else `creator`; null where it is not the Book's own." }
+        role: { type: [string, "null"], enum: [creator, trader, null], description: "What the voter's profile is to the token: `trader` for a Book's trader who acted on chain, else `creator` for its dev; null where it is not the token's own." }
         voter: { $ref: "#/components/schemas/BooksAddress" }
         side: { $ref: "#/components/schemas/BookVoteSide" }
         text: { type: string, description: "Plain text, line breaks as `\\n`." }
-        trader: { type: boolean, description: "The voter is the Book's own: its creator, or a trader who acted. Its vote counts in no number." }
+        trader: { type: boolean, description: "The voter is the Book's own: its dev, or a trader who acted. Its vote counts in no number." }
         verified: { type: boolean, description: The voter's account carries Mancer's verified mark now. }
         at: { type: number, description: Unix seconds of its last change. }
     BookTokenMeta:
@@ -9913,7 +10413,7 @@ components:
         token: { $ref: "#/components/schemas/BooksAddress" }
         name: { type: string }
         symbol: { type: string }
-        role: { type: string, enum: [creator, trader, creator-trader], description: "`creator`, `trader` (acted, not the creator), or `creator-trader`." }
+        role: { type: string, enum: [creator, trader, creator-trader], description: "`creator`, `trader` (acted, not the dev), or `creator-trader`." }
         phase: { $ref: "#/components/schemas/BookPhase" }
         returnBps: { type: [number, "null"], description: "Trading or frozen: the vault's value less its cost basis, over the cost basis, at the Book's last reading. Null otherwise." }
         holderReturnBps:
@@ -10093,7 +10593,7 @@ components:
     BookTrust:
       type: string
       enum: [trusted, plain, flagged]
-      description: A Book's trust, read of its creator and the traders who acted.
+      description: A Book's trust, read of its dev and the traders who acted.
     BookUnredeemable:
       type: object
       description: "What never redeems once a Book settled: the tokens behind NFTs stuck in the market's vault and tokens sent to it, and the pot they keep."
@@ -10150,7 +10650,7 @@ components:
     BookValueSource:
       type: string
       enum: [weth, burned-at-settlement, mancer-plan, reference, none]
-      description: "How a holding is valued: `weth`, `burned-at-settlement` (the Book's own token), `mancer-plan` (a route Mancer planned), `reference` (a reference price), or `none`."
+      description: "How a holding is valued: `weth` (the settlement asset held as it is: WETH, or the base pair on a Book that settles in it), `burned-at-settlement` (the Book's own token), `mancer-plan` (a route Mancer planned), `reference` (a reference price), or `none`."
     BookVaultHolding:
       type: object
       description: One token the vault tracks.
@@ -10417,14 +10917,19 @@ components:
           items: { $ref: "#/components/schemas/BookVaultHolding" }
         untracked:
           type: array
-          description: Tokens it holds and does not track, which only a sweep sells.
+          description: "Tokens it holds and does not track. They take none of its spots, and only a sweep sells them once the Book settles. A token sent in is listed only where it is verified or an issued stock."
           items:
             type: object
             properties:
               token: { $ref: "#/components/schemas/BooksAddress" }
               symbol: { type: [string, "null"] }
               balance: { $ref: "#/components/schemas/BooksUnits" }
-            required: [token, symbol, balance]
+              origin:
+                type: string
+                enum: [route, sent]
+                description: "`route` where it arrived inside the vault's own trade, from its deployment's swap adapter or MancerRouter; `sent` for anything else, such as an airdrop."
+              verified: { type: boolean, description: "On Mancer's verified list." }
+            required: [token, symbol, balance, origin, verified]
         pending:
           description: The pending trade, where one waits.
           anyOf: [{ $ref: "#/components/schemas/BookPendingIntent" }, { type: "null" }]
@@ -10538,7 +11043,7 @@ components:
           anyOf: [{ $ref: "#/components/schemas/BooksAddress" }, { type: "null" }]
     BookVoteCounts:
       type: object
-      description: "A Book's votes: the wallets on each side that carry Mancer's verified mark now, the Book's own creator and acted traders left out."
+      description: "A Book's votes: the wallets on each side that carry Mancer's verified mark now, the Book's own dev and acted traders left out."
       required: [up, down]
       properties:
         up: { type: number }
@@ -10641,7 +11146,7 @@ components:
           description: The wallet's roles on the Book.
           required: [creator, trader, operatorNftId, operatorNft, marketMaker]
           properties:
-            traderActed: { type: boolean, description: "The wallet acted in its seat on chain (confirmed a trade or an order, or settled the Book), or is the creator in its own seat." }
+            traderActed: { type: boolean, description: "The wallet acted in its seat on chain (confirmed a trade or an order, or settled the Book), or is the dev in its own seat." }
             creator: { type: boolean }
             trader: { type: boolean }
             operatorNftId: { type: [string, "null"] }
@@ -10681,7 +11186,11 @@ components:
                 payoutWei: { $ref: "#/components/schemas/BooksUnits" }
               required: [amount, payoutWei]
             - { type: "null" }
-        cutOwedWei: { $ref: "#/components/schemas/BooksUnits", description: The traders' cut it is owed. }
+        cutOwedWei: { $ref: "#/components/schemas/BooksUnits", description: "The traders' cut it is owed, in the settlement asset." }
+        settleAsset: { $ref: "#/components/schemas/BookSettleAssetView", description: "What `atBackingWei`, `redeemable.payoutWei` and `cutOwedWei` are counted in. Absent means WETH." }
+        padClaimable:
+          description: "What the pad's claim ledger holds for this wallet in the Book's base pair; null where it did not read."
+          anyOf: [{ $ref: "#/components/schemas/BooksUnits" }, { type: "null" }]
         pendingOnYou:
           description: A vault trade or order that waits on this trader's confirmation.
           anyOf:
@@ -11003,7 +11512,7 @@ components:
         exists: { type: boolean, const: false }
         operators:
           type: array
-          description: "Who may open it: the creator, and the operator NFT's holder once it moved after settlement."
+          description: "Who may open it: the dev, and the operator NFT's holder once it moved after settlement."
           items: { $ref: "#/components/schemas/BooksAddress" }
         canOpen: { type: boolean, description: False once the Book is cancelled. }
     NftMarketOpen:
@@ -11321,14 +11830,15 @@ components:
       required: [id, kind, actor, at, trades]
       properties:
         id: { type: string, description: "The notice's id in the account's inbox." }
-        kind: { type: string, enum: [follow, trade, webhook, account-deletion] }
-        actor: { description: "Who followed, or whose trades these are; for a webhook notice, the account's own wallet; for a deletion's, the wallet that asked or cancelled.", allOf: [{ $ref: "#/components/schemas/Address" }] }
+        kind: { type: string, enum: [follow, trade, webhook, account-deletion, book] }
+        actor: { description: "Who followed, or whose trades these are; for a webhook notice, the account's own wallet; for a deletion's, the wallet that asked or cancelled; for a Book's, the Book's dev.", allOf: [{ $ref: "#/components/schemas/Address" }] }
         at: { type: integer, description: "Unix seconds: the follow's time, or the newest trade's block time." }
         trades: { type: integer, description: "A trade notice's count of trades (1 for a follow)." }
         txHash: { type: [string, "null"], description: "The newest trade's transaction." }
         trade: { type: [object, "null"], additionalProperties: true, description: "The newest trade, as the wallet's own trades list it (`GET /v1/wallets/{address}/swaps`)." }
         webhook: { description: "A webhook notice's hook, in place of `trade`: a hook made or paused.", allOf: [{ $ref: "#/components/schemas/WebhookNotice" }] }
         deletion: { description: "An account deletion's notice, in place of `trade`: the request made or cancelled.", allOf: [{ $ref: "#/components/schemas/DeletionNotice" }] }
+        book: { description: "A Book's notice, in place of `trade`: the Book and its step.", allOf: [{ $ref: "#/components/schemas/BookNotice" }] }
     AccountBookEventData:
       type: object
       description: "`book.next`, `book.pending`, `book.redeemable` and `book.cut-owed`: the Book, its phase at the block it was read at, and the kind's own fields."
@@ -11358,8 +11868,17 @@ components:
             minOut: { type: string }
             deadline: { type: string }
         amount: { type: string, description: "`book.redeemable` alone: the wallet's tokens." }
-        payoutWei: { type: string, description: "`book.redeemable` alone: what they redeem for, in wei." }
-        cutOwedWei: { type: string, description: "`book.cut-owed` alone: the cut owed the trader now, in wei." }
+        payoutWei: { type: string, description: "`book.redeemable` alone: what they redeem for, in the settlement asset's raw units (`settleAsset`)." }
+        cutOwedWei: { type: string, description: "`book.cut-owed` alone: the cut owed the trader now, in the settlement asset's raw units (`settleAsset`)." }
+        settleAsset:
+          type: object
+          description: "`book.redeemable` and `book.cut-owed`: the asset the amounts are in, WETH included."
+          required: [token, symbol, decimals, isWeth]
+          properties:
+            token: { $ref: "#/components/schemas/BooksAddress" }
+            symbol: { type: string }
+            decimals: { type: number }
+            isWeth: { type: boolean }
     StreamTicket:
       type: object
       required: [ticket, topic, expiresAt, sessionExpiresAt, socket, head]
@@ -11524,17 +12043,17 @@ components:
           items: { $ref: "#/components/schemas/BookDraft" }
     BookCreatorRow:
       type: object
-      description: One of the top creators, over the Books the board lists that were not cancelled.
+      description: One of the top devs, over the Books the board lists that were not cancelled.
       required: [address, verified, books, live, settled, valueWei, bestReturnBps, latestBook]
       properties:
         address: { $ref: "#/components/schemas/BooksAddress" }
-        verified: { type: boolean, description: "The creator carries Mancer's verified mark." }
+        verified: { type: boolean, description: "The dev carries Mancer's verified mark." }
         books: { type: integer }
         live: { type: integer, description: Raising, graduated, trading or frozen. }
         settled: { type: integer }
         valueWei: { $ref: "#/components/schemas/BooksUnits", description: "Each Book's `bookValueWei` summed: a raise's funds, a live vault's value, what a settled Book paid out." }
         bestReturnBps: { type: [number, "null"], description: "The best settled Book's return after the close fee and the traders' cut; null where none settled." }
-        latestBook: { $ref: "#/components/schemas/BooksAddress", description: "The creator's newest such Book." }
+        latestBook: { $ref: "#/components/schemas/BooksAddress", description: "The dev's newest such Book." }
     BooksCreatorsResponse:
       type: object
       required: [creators]
@@ -11835,8 +12354,8 @@ components:
           type: array
           description: "The fields Mancer hid on this profile."
           items: { type: string, enum: [displayName, bio, website, avatar, banner, xAvatar] }
-        open: { type: boolean, description: "The account's profile writes are open." }
-        opening: { type: string, enum: [everyone, beta, staked, stake, unread, closed], description: "Why the writes are open, or what would open them: `stake` (a staked Chain Mancer) or `closed`. `unread`: the stake could not be read just now." }
+        open: { type: boolean, enum: [true], description: "Always true: profile writes are open to every signed-in wallet." }
+        opening: { type: string, enum: [everyone], description: "Always `everyone`: profile writes are open to every signed-in wallet." }
         usernameClaim: { type: string, enum: [everyone, x, staked, needs-x-or-stake, opened-elsewhere, unread], description: "Whether a username claim is open, and by which, or what it needs. See `PUT /v1/me/username`." }
         deletion:
           description: "A linked wallet's request to delete the account, while one stands; null otherwise."
@@ -11886,7 +12405,7 @@ components:
       properties:
         username: { type: string, description: "The name as a claim reads it: trimmed, `@` dropped, lowercase." }
         available: { type: boolean }
-        reason: { type: string, enum: [format, length, reserved, taken, held, prefix, staff-word, lookalike, symbol, x-handle, cooldown, yours, not-open, opened-elsewhere, needs-x-or-stake, unread], description: "Why it is not available: each is its `username-` code's rule, `yours` the account's own name, `not-open` writes closed." }
+        reason: { type: string, enum: [format, length, reserved, taken, held, prefix, staff-word, lookalike, symbol, x-handle, cooldown, yours, opened-elsewhere, needs-x-or-stake, unread], description: "Why it is not available: each is its `username-` code's rule, `yours` the account's own name." }
         availableAt: { type: integer, description: "When a held name frees, the account's wait ends, or an opener frees." }
         word: { type: string, description: "The word a name may not contain." }
     AccountWalletsResponse:
@@ -11955,11 +12474,11 @@ components:
         nextBefore: { type: [string, "null"], description: "The cursor of the next older page, opaque. Null once the feed ends." }
     Notice:
       type: object
-      description: "One notification: a follow (`follow`), a trade alert (`trade`), a webhook made or paused (`webhook`), or a linked wallet's request to delete the account made or cancelled (`account-deletion`)."
+      description: "One notification: a follow (`follow`), a trade alert (`trade`), a webhook made or paused (`webhook`), a linked wallet's request to delete the account made or cancelled (`account-deletion`), or a step of a Book the account runs or holds (`book`)."
       required: [id, kind, at, actor, unread]
       properties:
         id: { type: string, description: "The notice's id, a decimal string: higher is newer." }
-        kind: { type: string, enum: [follow, trade, webhook, account-deletion] }
+        kind: { type: string, enum: [follow, trade, webhook, account-deletion, book] }
         at: { type: integer, description: "Unix seconds: the follow's time, or the newest trade's block time." }
         actor: { description: "Who followed, or whose trades these are.", allOf: [{ $ref: "#/components/schemas/Address" }] }
         unread: { type: boolean }
@@ -11967,6 +12486,30 @@ components:
         trade: { description: "A trade notice's newest trade, as the wallet's own trades list it. Absent on a follow.", allOf: [{ $ref: "#/components/schemas/WalletTrade" }] }
         webhook: { description: "A webhook notice's hook. Its actor is the account's own wallet.", allOf: [{ $ref: "#/components/schemas/WebhookNotice" }] }
         deletion: { description: "An account deletion's notice: the request. Its actor is the wallet that asked or cancelled.", allOf: [{ $ref: "#/components/schemas/DeletionNotice" }] }
+        book: { description: "A Book's notice: the Book and its step. Its actor is the Book's dev.", allOf: [{ $ref: "#/components/schemas/BookNotice" }] }
+    BookNotice:
+      type: object
+      description: "A step of a Book the account runs or holds, told once an account. `pending`: a vault trade or order waits on this trader's confirmation. `graduate`, `bond`: its dev and traders can take the step now. `ending`: trading ends in a day. `settle`: it ended, and its dev and traders can settle it now. `ended`: it ended, and anyone can settle it from `openToAllAt`. `open`: anyone can settle it now. `cut`: a trader's cut can be claimed. `redeem`: its tokens redeem for WETH."
+      required: [book, event, role, wallet, act]
+      properties:
+        book:
+          type: object
+          required: [token, name, symbol, logo]
+          properties:
+            token: { $ref: "#/components/schemas/Address" }
+            name: { type: string, description: "The name the Book is served under." }
+            symbol: { type: string }
+            logo: { type: [string, "null"], description: "The logo's path on the API, or null where its dev set none." }
+        event: { type: string, enum: [pending, graduate, bond, ending, settle, ended, open, cut, redeem] }
+        role: { type: string, enum: [creator, trader, holder], description: "Whom the notice tells it as." }
+        wallet: { description: "The wallet of the account the notice is about.", allOf: [{ $ref: "#/components/schemas/Address" }] }
+        act: { type: boolean, description: "An act waits on the reader: the Book's page opens on its Trade section (`/books/{token}?view=trade`)." }
+        pending: { type: object, required: [kind, digest], properties: { kind: { type: string, enum: [trade, order] }, digest: { $ref: "#/components/schemas/Hash" } }, description: "`pending`: the vault trade or order waiting." }
+        endsAt: { type: integer, description: "`ending`: unix seconds trading ends." }
+        openToAllAt: { type: integer, description: "`ended`: unix seconds anyone may settle it." }
+        amountWei: { type: string, description: "`cut`, `redeem`: what the account's wallets claim or redeem, in WETH's wei." }
+        amountUsd: { type: [number, "null"], description: "That in dollars when the notice was written; null where unpriced." }
+        grown: { type: boolean, description: "`cut`, `redeem`: a sweep grew what was told before." }
     DeletionNotice:
       type: object
       required: [state, requestedBy, deletesAt, cancelledBy, reason]
@@ -12614,6 +13157,17 @@ components:
         handle: { type: string }
         avatarUrl: { type: [string, "null"] }
         tier: { type: string, description: "The wallet's group in Mancer's list, `kol` unless named otherwise." }
+    TokenDev:
+      type: object
+      description: "A token's dev. A Book's dev is the Book's `creator`."
+      required: [address, source, since]
+      properties:
+        address: { $ref: "#/components/schemas/Address" }
+        source:
+          type: string
+          enum: [assigned, book, launchpad]
+          description: "`assigned`: Mancer named the wallet, which beats every other source. `book`: a Book's own token, the wallet that opened it. `launchpad`: the wallet the token's launch log names, never a contract."
+        since: { type: [integer, "null"], description: "Unix seconds: the assignment, the Book's open or the token's launch; null where unknown." }
     LaunchpadMark:
       type: object
       description: The launchpad that launched a token.

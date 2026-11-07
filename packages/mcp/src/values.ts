@@ -363,6 +363,23 @@ export interface UnsignedTx {
   why: string
   /** What the calldata says, read from the calldata itself. */
   does?: Record<string, unknown>
+  /** A read the agent makes right before it sends this transaction, at the latest block: where the chain answers
+   * otherwise, it sends nothing and builds again. */
+  precondition?: TxPrecondition
+}
+
+/** A read of the chain a transaction stands on (`UnsignedTx.precondition`). */
+export interface TxPrecondition {
+  /** The function read, with its argument: `settleAssetFor(7)`. */
+  read: string
+  /** The `eth_call` that reads it: to the contract, with this calldata. */
+  call: { to: string; data: string }
+  /** What it must answer, lowercase. */
+  answers: string
+  /** What its zero address answer means, where it means one: WETH, lowercase. */
+  zeroAddressIs?: string
+  /** What to do where it answers otherwise. */
+  otherwise: string
 }
 
 const WETH_ABI = parseAbi(['function deposit() payable', 'function withdraw(uint256)'])

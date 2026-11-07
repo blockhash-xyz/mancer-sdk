@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { encodeFunctionData, erc20Abi, zeroAddress, type Address, type Hex } from 'viem'
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import { openBookParamsOf } from '@blockhash/mancer-sdk'
-import { bookCallData, buyEthCall, liquidateCall, mancerOrdersV3Abi, mancerRouterAbi, openBookCall } from '../../sdk/src/shared'
+import { bookCallData, bookLaunchDeployment, buyEthCall, liquidateCall, mancerOrdersV3Abi, mancerRouterAbi, openBookCall } from '../../sdk/src/shared'
 import { _resetTrustedForTests } from '../src/checks'
 import { _resetTokenMemoForTests } from '../src/values'
 import {
@@ -314,6 +314,9 @@ test("a settlement is the settler's own liquidate of the signed sales, for the v
     const r = await run(good, 'build_book_settlement', { token: BOOK, wallet: TAKER }, { authorization: `Bearer mancer_${'ab'.repeat(24)}` })
     assert.equal(r.isError, false, r.text)
     assert.equal(r.body.transactions[0].to, BOOKS.settler.address.toLowerCase())
+    // a settler that settles every Book in WETH has no asset to move: no read before the send
+    assert.equal(r.body.transactions[0].precondition, undefined)
+    assert.equal(r.body.next, 'Sign and send each transaction in order from the wallet.')
   } finally {
     await good.close()
   }
@@ -327,26 +330,28 @@ test("a settlement is the settler's own liquidate of the signed sales, for the v
 
 test("a Book's open is the factory's openBook of the draft this connection saved and the terms asked, byte for byte", async () => {
   const agent = privateKeyToAccount(generatePrivateKey())
+  // the kit's launch deployment: the Books contracts until BOOK_LAUNCH_FACTORY names v2c's factory
+  const LAUNCH = bookLaunchDeployment()!
   const id = 'a'.repeat(32)
   let named = 'Real Book'
   const api = await standIn({
     'POST /v1/books/drafts': () => ({ status: 201, body: { draft: { id } } }),
     'POST /v1/books/drafts/:id/steps': ({ body }) => {
       const b = body as { wallet: string; terms: Record<string, unknown> }
-      const c = bookCallData(openBookCall(BOOKS, openBookParamsOf(b.terms, { name: named, symbol: 'REAL' })))
-      return { body: { draft: { id, factory: BOOKS.factory.address, name: named, symbol: 'REAL' }, bind: { method: 'PATCH', path: `/v1/books/drafts/${id}` }, chainId: 4663, wallet: b.wallet, steps: [{ kind: 'call', to: c.to, data: c.data, value: '0', gas: '900000', why: 'Opens.' }], simulation: { ok: true }, readAfter: null } }
+      const c = bookCallData(openBookCall(LAUNCH, openBookParamsOf(b.terms, { name: named, symbol: 'REAL' })))
+      return { body: { draft: { id, factory: LAUNCH.factory.address, name: named, symbol: 'REAL' }, bind: { method: 'PATCH', path: `/v1/books/drafts/${id}` }, chainId: 4663, wallet: b.wallet, steps: [{ kind: 'call', to: c.to, data: c.data, value: '0', gas: '900000', why: 'Opens.' }], simulation: { ok: true }, readAfter: null } }
     },
   })
   const { client, close } = await httpClient(configFor(api))
   try {
     const begun = await call(client, 'sign_in', { wallet: agent.address })
     await call(client, 'complete_sign_in', { signature: await agent.signMessage({ message: begun.body.message }) })
-    const saved = await call(client, 'create_book_draft', { factory: BOOKS.factory.address, name: 'Real Book', symbol: 'REAL', targets: [USDG] })
+    const saved = await call(client, 'create_book_draft', { factory: LAUNCH.factory.address, name: 'Real Book', symbol: 'REAL', targets: [USDG] })
     assert.equal(saved.isError, false, saved.text)
     const terms = { traders: [agent.address], durationSecs: 86_400 }
     const open = await call(client, 'build_book_open', { draftId: id, terms })
     assert.equal(open.isError, false, open.text)
-    assert.equal(open.body.transactions[0].to, BOOKS.factory.address.toLowerCase())
+    assert.equal(open.body.transactions[0].to, LAUNCH.factory.address.toLowerCase())
     // an open of another name than the draft this connection saved is refused
     named = 'Not the Book'
     refused(await call(client, 'build_book_open', { draftId: id, terms }), 'book')

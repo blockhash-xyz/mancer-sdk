@@ -14,7 +14,7 @@ import { sessionClaims, signInMessageMismatch, type SessionClaims } from './auth
 import { contractsMismatch, pinnedContracts, readCodeHashes, type TrustedContracts } from './contracts'
 import { MancerCheckError, MancerError, SDK_ERROR_CODES, readRateLimit, type RateLimitInfo } from './errors'
 import { OPERATIONS, type Contracts, type OperationId, type Operations } from './generated/openapi'
-import { BOOK_DEPLOYMENTS, launchAdapterDeployment, robinhoodChain, type BookDeployment } from './shared'
+import { BOOK_DEPLOYMENTS, BOOK_PERPS_DEPLOYMENTS, launchAdapterDeployment, robinhoodChain, type BookDeployment, type BookPerpsDeployment } from './shared'
 
 /** A Smart Launch pad's quote token (constructor state, read back beside its code hash). */
 const PAD_QUOTE_ABI = parseAbi(['function quote() view returns (address)'])
@@ -64,6 +64,9 @@ export interface MancerOptions {
   /** The Books deployments a Book's act is held to. Default, the kit's pins: name others only to run against a local
    * stand-in of the chain. */
   bookDeployments?: readonly BookDeployment[]
+  /** The Books perps adapters a vault's perps are held to (one a factory, each its reviewed code). Default, the kit's
+   * pins: name others only to run against a local stand-in of the chain. */
+  bookPerpsDeployments?: readonly BookPerpsDeployment[]
 }
 
 export interface RequestOptions {
@@ -122,6 +125,8 @@ export class MancerClient {
   readonly #signInDomain: string | null
   /** The Books deployments this client trusts. */
   readonly bookDeployments: readonly BookDeployment[]
+  /** The Books perps adapters this client trusts. */
+  readonly bookPerpsDeployments: readonly BookPerpsDeployment[]
   #launchStack: Promise<void> | null = null
   #apiKey: string | null
   #session: Session | null = null
@@ -141,6 +146,7 @@ export class MancerClient {
     this.#pinned = options.trusted ?? pinnedContracts(robinhoodChain.id)
     this.#signInDomain = options.signInDomain ?? null
     this.bookDeployments = options.bookDeployments ?? BOOK_DEPLOYMENTS
+    this.bookPerpsDeployments = options.bookPerpsDeployments ?? BOOK_PERPS_DEPLOYMENTS
     const transport: Transport = http(options.rpcUrl ?? DEFAULT_RPC_URL)
     this.publicClient = options.publicClient ?? (createPublicClient({ chain: robinhoodChain, transport }) as PublicClient)
     this.walletClient = options.walletClient ?? (this.account ? createWalletClient({ account: this.account, chain: robinhoodChain, transport }) : null)

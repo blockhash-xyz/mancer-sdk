@@ -3,7 +3,7 @@
 import { encodeFunctionData, type Abi, type Address, type Hex } from 'viem'
 import type { OrderMessageV3 } from '../orders'
 import { BOOK_ABIS } from './abis'
-import { bookAbisFor, type BookDeployment } from './deployments'
+import { BOOK_SHARED, bookAbisFor, bookPadKind, bookSettlesInChosenAsset, type BookDeployment } from './deployments'
 import type { BookQuote, BookTradeIntent } from './typed-data'
 
 export interface BookCall {
@@ -68,8 +68,28 @@ export function buyCall(d: BookDeployment, bookId: bigint, quoteIn: bigint, minT
   return call(d.pad.address, bookAbisFor(d).pad, 'buy', [bookId, quoteIn, minTokensOut, recipient])
 }
 
-export function sellCall(d: BookDeployment, bookId: bigint, tokensIn: bigint, minOut: bigint, payWith: 'eth' | 'quote'): BookCall {
-  return call(d.pad.address, bookAbisFor(d).pad, payWith === 'eth' ? 'sellEth' : 'sell', [bookId, tokensIn, minOut])
+export function sellCall(d: BookDeployment, bookId: bigint, tokensIn: bigint, minOut: bigint, payWith: 'eth' | 'quote', recipient?: Address): BookCall {
+  const fn = payWith === 'eth' ? 'sellEth' : 'sell'
+  if (bookPadKind(d) === 'claims') {
+    if (!recipient) throw new Error('a TraderBookPadV2 sale names its recipient')
+    return call(d.pad.address, bookAbisFor(d).pad, fn, [bookId, tokensIn, minOut, recipient])
+  }
+  return call(d.pad.address, bookAbisFor(d).pad, fn, [bookId, tokensIn, minOut])
+}
+
+export function padClaimCall(d: BookDeployment, token: Address, unwrap: boolean): BookCall {
+  if (bookPadKind(d) !== 'claims') throw new Error('the Books pad keeps no claim ledger: it pays at each tax')
+  return call(d.pad.address, bookAbisFor(d).pad, 'claim', [token, unwrap])
+}
+
+export function padClaimForCall(d: BookDeployment, account: Address, token: Address): BookCall {
+  if (bookPadKind(d) !== 'claims') throw new Error('the Books pad keeps no claim ledger: it pays at each tax')
+  return call(d.pad.address, bookAbisFor(d).pad, 'claimFor', [account, token])
+}
+
+export function setSettleAssetCall(d: BookDeployment, bookId: bigint, inQuote: boolean): BookCall {
+  if (!bookSettlesInChosenAsset(d)) throw new Error("this deployment's settler settles every Book in WETH")
+  return call(d.settler.address, bookAbisFor(d).settler, 'setSettleAsset', [bookId, inQuote])
 }
 
 export function graduateCall(d: BookDeployment, bookId: bigint): BookCall {
@@ -176,7 +196,11 @@ export function claimCreatorCutCall(d: BookDeployment, bookId: bigint): BookCall
   return call(d.settler.address, bookAbisFor(d).settler, 'claimCreatorCut', [bookId])
 }
 
-export function claimCloseFeeCall(d: BookDeployment, recipient: Address): BookCall {
+export function claimCloseFeeCall(d: BookDeployment, recipient: Address, asset?: Address): BookCall {
+  if (asset && asset.toLowerCase() !== BOOK_SHARED.weth.toLowerCase()) {
+    if (!bookSettlesInChosenAsset(d)) throw new Error("this deployment's settler books every close fee in WETH")
+    return call(d.settler.address, bookAbisFor(d).settler, 'claimCloseFeeIn', [recipient, asset])
+  }
   return call(d.settler.address, bookAbisFor(d).settler, 'claimCloseFee', [recipient])
 }
 

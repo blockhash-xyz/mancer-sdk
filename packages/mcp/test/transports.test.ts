@@ -77,6 +77,17 @@ test('the version is the package\'s, and the SDK it names is the one beside it',
   for (const [n, v] of Object.entries(pkg.dependencies)) assert.match(v, /^\d+\.\d+\.\d+$/, `${n} is named by its exact version`)
 })
 
+test("I-2: the server moves past npm's 0.2.3 with the SDK beside it, since the tree pins Books v2c and 0.2.3 pins none", () => {
+  // the public repository's publish runs only for a version npm lacks: under 0.2.3 a tree with v2c would publish nothing
+  const newerThan = (a: string, b: string): boolean => {
+    const [x, y] = [a, b].map((v) => v.split('.').map(Number))
+    for (let i = 0; i < 3; i++) if (x![i] !== y![i]) return x![i]! > y![i]!
+    return false
+  }
+  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }
+  assert.ok(newerThan(pkg.version, '0.2.3'), `the server is ${pkg.version}`)
+})
+
 const post = (url: string, body: unknown, headers: Record<string, string> = {}) =>
   fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', ...headers }, body: JSON.stringify(body) })
 const INIT = { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'raw', version: '0' } } }

@@ -40,7 +40,8 @@ function standInDeployment(d: BookDeployment): BookDeployment {
     bookTokenCodeHash: hashAt(BOOK), vaultCloneCodeHash: hashAt(VAULT),
   }
 }
-const D = standInDeployment(K)
+// the stand-in opens new Books whichever stack the kit's launch factory names: the client trusts it alone
+const D: BookDeployment = { ...standInDeployment(K), opensNewBooks: true }
 
 function ready(steps: unknown[], over: Record<string, unknown> = {}) {
   return { chainId: 4663, wallet: ME.toLowerCase(), steps, simulation: SIM_OK, readAfter: null, ...over }

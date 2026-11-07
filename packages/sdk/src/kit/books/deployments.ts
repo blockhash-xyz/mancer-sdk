@@ -6,7 +6,44 @@ import { BOOK_ABIS } from './abis'
 
 export type CodePinned = CodePinnedAddress
 
-export type BookAbiSet = 'books'
+export type BookAbiSet = 'books' | 'books-4e07ea0' | 'books-e8d92ea'
+
+export interface BookAbiRules {
+
+  pad: 'gen3' | 'claims'
+
+  settlement: 'weth' | 'chosen'
+}
+
+export const BOOK_ABI_RULES: Readonly<Record<BookAbiSet, BookAbiRules>> = {
+  books: { pad: 'gen3', settlement: 'weth' },
+  'books-4e07ea0': { pad: 'claims', settlement: 'weth' },
+  'books-e8d92ea': { pad: 'claims', settlement: 'chosen' },
+}
+
+export const BOOK_VAULT_DOMAIN_NAME_GEN3 = 'TOKENIZE.FUN'
+
+export function bookVaultDomainName(d: Pick<BookDeployment, 'expected'>): string {
+  return d.expected.vaultDomainName ?? BOOK_VAULT_DOMAIN_NAME_GEN3
+}
+
+export function bookVaultDomainNames(deployments: readonly Pick<BookDeployment, 'expected'>[] = BOOK_DEPLOYMENTS): string[] {
+  return [...new Set(deployments.map((d) => bookVaultDomainName(d)))]
+}
+
+export function bookPadKind(d: Pick<BookDeployment, 'abiSet'>): BookAbiRules['pad'] {
+  return BOOK_ABI_RULES[d.abiSet].pad
+}
+
+export function bookSettlesInChosenAsset(d: Pick<BookDeployment, 'abiSet'>): boolean {
+  return BOOK_ABI_RULES[d.abiSet].settlement === 'chosen'
+}
+
+export const BOOK_SETTLE_SWITCH_MARGIN_SECS = 300n
+
+export function bookSettleSwitchClosed(unlockAt: bigint, nowSec: bigint): boolean {
+  return unlockAt !== 0n && nowSec + BOOK_SETTLE_SWITCH_MARGIN_SECS >= unlockAt
+}
 
 export type BookAccess = 'public' | 'beta'
 
@@ -39,6 +76,10 @@ export interface BookDeployment {
   adapters: { uniswap: CodePinned; mancer?: CodePinned }
 
   bookAnvilFactory?: CodePinned
+
+  padRegistry?: CodePinned
+
+  stonkPerpsAdapter?: CodePinned
 
   orderSpenders: Address[]
   expected: BookExpected
@@ -113,6 +154,16 @@ export interface BookExpected {
   quotes?: readonly BookListedQuote[]
 
   hooksAllowed?: readonly Address[]
+
+  bootstrapSealed?: boolean
+
+  padVersion?: number
+
+  padRegistryOwner?: Address
+
+  vaultDomainName?: string
+
+  stonkPerps?: { factory: Address; weth: Address; operator: Address; accountImpl: Address; testMode: false; bridge: Address }
 }
 
 export interface BookConstants {
@@ -124,6 +175,9 @@ export interface BookConstants {
   closeFeeBps?: number
   mancerShareBps?: number
   maxOrderFeeBps?: number
+
+  autoBondMinGas?: number
+  bondBountyBps?: number
 }
 
 export const BOOK_SHARED = {
@@ -145,7 +199,7 @@ export const BOOK_SHARED = {
   multicall3: '0xcA11bde05977b3631167028862bE2a173976CA11',
 } as const satisfies Record<string, Address>
 
-export const BOOK_CONSTANTS: Required<BookConstants> = {
+export const BOOK_CONSTANTS: Required<Omit<BookConstants, 'autoBondMinGas' | 'bondBountyBps'>> = {
   liquidateGraceSecs: 172_800,
   maxTracked: 16,
   taxFloorBps: 100,
@@ -200,8 +254,12 @@ const BOOKS_OWNER: Address = '0xD4aF10Bc56b08f8fc2990a3ADeeD4b757ae6A26C'
 
 export const BOOKS_MANCER_SIGNER: Address = '0x119B0496B837B60a464923b6521d6D98Dc61a68c'
 
+export const BOOK_LAUNCH_FACTORY: Address = '0x0D650F791f6c53C83D5076f1f144C7C2d673cCB2'
+
 export function booksStack(s: {
   label: string
+
+  abiSet?: BookAbiSet
   deployBlock: bigint
   minDurationSecs: number
   factory: CodePinned
@@ -217,17 +275,32 @@ export function booksStack(s: {
   bookAnvilFactory: CodePinned
   vaultCloneCodeHash: Hex
   bookTokenCodeHash: Hex
+
+  opensNewBooks?: boolean
+
+  padStockBooster?: Address
+
+  bootstrapSealed?: boolean
+  padRegistry?: CodePinned
+  stonkPerpsAdapter?: CodePinned
+  stonkPerps?: BookExpected['stonkPerps']
+
+  quotes?: readonly BookListedQuote[]
+
+  vaultDomainName?: string
 }): BookDeployment {
   const f = s.factory.address
+  const abiSet = s.abiSet ?? 'books'
+  const claims = BOOK_ABI_RULES[abiSet].pad === 'claims'
   return {
     factory: s.factory,
     label: s.label,
-    abiSet: 'books',
+    abiSet,
 
     access: 'public',
     chainId: 4663,
     deployBlock: s.deployBlock,
-    opensNewBooks: true,
+    opensNewBooks: s.opensNewBooks ?? f.toLowerCase() === BOOK_LAUNCH_FACTORY.toLowerCase(),
     pad: s.pad,
     settler: s.settler,
     lpFees: s.lpFees,
@@ -239,6 +312,8 @@ export function booksStack(s: {
     bookTokenCodeHash: s.bookTokenCodeHash,
     adapters: { uniswap: s.uniswapAdapter, mancer: s.mancerAdapter },
     bookAnvilFactory: s.bookAnvilFactory,
+    ...(s.padRegistry ? { padRegistry: s.padRegistry } : {}),
+    ...(s.stonkPerpsAdapter ? { stonkPerpsAdapter: s.stonkPerpsAdapter } : {}),
     orderSpenders: [BOOK_SHARED.mancerOrdersV3],
     expected: {
       adapterRouter: BOOK_SHARED.mancerRouter,
@@ -254,7 +329,7 @@ export function booksStack(s: {
       padLocker: s.locker.address,
       padEthUsdFeed: BOOK_SHARED.ethUsdFeed,
       padTreasury: BOOK_SHARED.stonkBrokersTreasury,
-      padStockBooster: BOOK_SHARED.clockIn,
+      padStockBooster: s.padStockBooster ?? BOOK_SHARED.clockIn,
       factoryWeth: BOOK_SHARED.weth,
       lockerNfpm: BOOK_SHARED.nfpm,
       lockerUniFactory: BOOK_SHARED.uniswapV3Factory,
@@ -269,11 +344,15 @@ export function booksStack(s: {
       pendingOwner: zeroAddress,
       mancerSigner: BOOKS_MANCER_SIGNER,
       minDurationSecs: s.minDurationSecs,
-      quotes: BOOK_LISTED_QUOTES,
+      quotes: s.quotes ?? BOOK_LISTED_QUOTES,
       hooksAllowed: [],
+      ...(s.bootstrapSealed === false ? { bootstrapSealed: false } : {}),
+      ...(claims ? { padVersion: 2, padRegistryOwner: BOOKS_OWNER } : {}),
+      ...(s.stonkPerps ? { stonkPerps: s.stonkPerps } : {}),
+      ...(s.vaultDomainName ? { vaultDomainName: s.vaultDomainName } : {}),
     },
     mancerSignerSlot: '0x0000000000000000000000000000000000000000000000000000000000000005',
-    constants: { ...BOOK_CONSTANTS },
+    constants: { ...BOOK_CONSTANTS, ...(claims ? { autoBondMinGas: 3_000_000, bondBountyBps: 2_000 } : {}) },
 
     displayNames: { [s.operatorNft.address.toLowerCase()]: 'Book Operator' },
   }
@@ -298,7 +377,68 @@ export const BOOKS_DEPLOYMENT: BookDeployment = booksStack({
   bookTokenCodeHash: '0xfdd5c6593898c7b24a3238a583fdbd939e75e2c9d6f9082681d1bb2c56124006',
 })
 
-export const BOOK_DEPLOYMENTS: readonly BookDeployment[] = [BOOKS_DEPLOYMENT]
+const STONK_PERPS_ADAPTER_1103: Address = '0x1A8D2cC2F88d9e80E0C797b2d7FCAD97299cFCc1'
+
+export const BOOKS_1103_DEPLOYMENT: BookDeployment = booksStack({
+  label: 'books-1103',
+  abiSet: 'books-4e07ea0',
+  deployBlock: 105_181_288n,
+  minDurationSecs: 604_800,
+  factory: { address: '0x6b6784Fa1F54d3274a5CeaD0E493643b83834C84', runtimeCodeHash: '0x4190a0ca0734c0defcbec0d84da12aaffc8e3c3aba3338802208bbb481af7089' },
+  pad: { address: '0xBeD0F4962EcC442bA23ECc3308A99cEc57a29982', runtimeCodeHash: '0x7db8bd53fdc2ccdcb11b9d294c5c7d8b3a0dd08c6a9f76b62d7515c787717a68' },
+  settler: { address: '0x41632753eE5B9Ef1EeF134F0bF6ff0f9D10a4D77', runtimeCodeHash: '0x1368a0e07d3a31f9c90da4090f0ecb52f4cb2918162cd2a69ee3129fd6972248' },
+  lpFees: { address: '0xC58eAB88FC8082cEC7F9F183fc5d0a1A0948DE6b', runtimeCodeHash: '0x7165604eb1506fc74e6379f55de8c29599fb155ec3be4988011df2753ad5fd54' },
+  locker: { address: '0xD011EFED5170406E78FF69EC47eE67aA27602DaB', runtimeCodeHash: '0x40b8692a0491c1762c2bcf6442687597c4a728a68341f786cb2859755902df05' },
+  lockerV4: { address: '0x2368E62597df5A67Ddd3c589B966394eD9860D37', runtimeCodeHash: '0x391547c8fa686a9857aae38d404e2f8a589ea5f52362820a4e96a1d290570c34' },
+  operatorNft: { address: '0x8Effcf556d8E9D5748De99e3c0d31D438c77d6F0', runtimeCodeHash: '0x9aea787d2a323a9c94762cf060989afc0b604792fd533558e24c76ad62df342f' },
+  accountImplementation: { address: '0x96963edB329DC27ABd7B79eE59483B50A537eD68', runtimeCodeHash: '0x597ce8da6d700e05a13e7e5cf436d23ef6c7ae76dd011fa4c15723fdc81d7652' },
+  uniswapAdapter: { address: '0x0E4bF370CC51dD9CD4004cc7b0Efddfa8ed0820B', runtimeCodeHash: '0x7f7bcc6431575a0705937d825da0f00620099e1ebb7033e2aada00d9c7f0937c' },
+  mancerAdapter: { address: '0x07752878BcEFE50e22Fb9543284FbdF3F0139931', runtimeCodeHash: '0xe12193044ecc08e1c3f46e7d7f0d0022fb66051909fbe48970c9a1e88d2edc04' },
+  bookAnvilFactory: { address: '0xa6A329697Cae9CF61F276E77a7833a89CEf39208', runtimeCodeHash: '0x1d52d278586aaab61f6f25398b8e524f73fa5758e6774c6f1a4a4fed85e90f09' },
+  padRegistry: { address: '0x23f85f1A3649072E11eeea6880F1b79a2198b342', runtimeCodeHash: '0x978637759822d545c6b9e92802c80b5885a5d4cfca982e22df570d03af088437' },
+  stonkPerpsAdapter: { address: STONK_PERPS_ADAPTER_1103, runtimeCodeHash: '0x9b3902c8f283de07184288ed05d6ccd898f65097bdff7e4c5ba61ec2e5636164' },
+  stonkPerps: {
+    factory: '0x6b6784Fa1F54d3274a5CeaD0E493643b83834C84',
+    weth: BOOK_SHARED.weth,
+    operator: BOOKS_OWNER,
+    accountImpl: '0x964674ba896069eF6981f250Acb62C8e5E94d58a',
+    testMode: false,
+    bridge: zeroAddress,
+  },
+  vaultCloneCodeHash: '0x3f50cd41d8e82b20cd5a40f71a42a57c8d4e9ceb06031271131c0215d078789a',
+  bookTokenCodeHash: '0x533d5913e513d3cd5a13b2c57b0e486e70840305554c6cc8be0ca58117469e46',
+  padStockBooster: '0xf4129019D8838f2555Bdc8EcB3024a02145dbC58',
+  bootstrapSealed: false,
+})
+
+export const BOOKS_V2C_DEPLOYMENT: BookDeployment = booksStack({
+  label: 'books-1105',
+  abiSet: 'books-e8d92ea',
+  deployBlock: 107_132_534n,
+  minDurationSecs: 604_800,
+  factory: { address: '0x0D650F791f6c53C83D5076f1f144C7C2d673cCB2', runtimeCodeHash: '0xccabadcb23983a3cbba3eb93baee67d77f7e53d4b0c371152d55a2e0f7139c68' },
+  pad: { address: '0xEa44025C4900E6cD14c830d4983454Fe3101536c', runtimeCodeHash: '0x8931690e458a99204cf2d83bb66b9bd711e470f88ec23c7034f54565c149b0b3' },
+  settler: { address: '0x42e94e2A9FdC40482B5d7959eA97EcCC7c6e2a37', runtimeCodeHash: '0xd508326e9f45d3bf9c43c8738ab9c9a469e804d9356dcfbd835f6c14009d9af0' },
+  lpFees: { address: '0x4449e6fFB1d117642352aFBAC61Fafa64c9A9FA9', runtimeCodeHash: '0xd142111e73e4b01263d0a753d603d63d709a6fcc7c2f8788478bd97fc2036fb9' },
+  locker: { address: '0x861b50411022C750e9a3e49a0AbA207EF10ffF7e', runtimeCodeHash: '0x7c22184f0f5a3ccbc2bafc6bd3c0ee4acd9859a8c0ad676b594b745227cca595' },
+  lockerV4: { address: '0x8477442A4e5F01553eB1772233c7695Eb83E638f', runtimeCodeHash: '0xdcdce45c347b15b5c421018ee7b2a703178c4b162775709ee8c0e82d11085053' },
+  operatorNft: { address: '0x15A5Dd33328f391CED235e7FA8a6C229ad8BbF69', runtimeCodeHash: '0xd9b5e0f56be3951637790fbfd3266ae8aed7fb4aee633f965d936c9be637283f' },
+  accountImplementation: { address: '0x929b25a5980417F6b51231d0889c3e2591b1707E', runtimeCodeHash: '0xca1dd159b2fe703d8397a64829dadc057b40e1cc8957777b91fc957b6965663d' },
+  uniswapAdapter: { address: '0x3E6abBcd24799e71997049b46A6DbAaaB886C627', runtimeCodeHash: '0xd83ea0610864f3a26016cd21c5008a70c1fb8dc210bb4e97bf72731593265a72' },
+  mancerAdapter: { address: '0xd8c56E6a272A47bF306c8C171B5dA91d7CC4709a', runtimeCodeHash: '0x375ee8492d236c0f1c9cd8be234d2ca9b1fc30eac41f2ea940107bb92239ad35' },
+  bookAnvilFactory: { address: '0x0e50856eAEdd438b14c1921F0C3bBc11a8D9c69A', runtimeCodeHash: '0x52dfdcec8414c929027220b34f87c4eba56dd7ec2cbc364f5aa546212d481f03' },
+  padRegistry: { address: '0x23f85f1A3649072E11eeea6880F1b79a2198b342', runtimeCodeHash: '0x978637759822d545c6b9e92802c80b5885a5d4cfca982e22df570d03af088437' },
+  vaultCloneCodeHash: '0x16fb7fb134d28b42d066504f52e6eef2d327cbad081509d650510b233d705831',
+  bookTokenCodeHash: '0xc8943e5298c87a5da795806433e00da48da037f2af9ca83727dbdcb90515c3ef',
+  padStockBooster: '0xf4129019D8838f2555Bdc8EcB3024a02145dbC58',
+  vaultDomainName: 'Mancer Books',
+})
+
+export const BOOK_DEPLOYMENTS: readonly BookDeployment[] = [BOOKS_DEPLOYMENT, BOOKS_1103_DEPLOYMENT, BOOKS_V2C_DEPLOYMENT]
+
+export function bookLaunchDeployment(deployments: readonly BookDeployment[] = BOOK_DEPLOYMENTS): BookDeployment | null {
+  return deployments.find((d) => d.opensNewBooks) ?? null
+}
 
 export function publicBookDeployments(deployments: readonly BookDeployment[] = BOOK_DEPLOYMENTS): BookDeployment[] {
   return deployments.filter((d) => d.access === 'public')
@@ -350,7 +490,7 @@ export function bookDisplayName(deployment: Pick<BookDeployment, 'displayNames'>
 
 export type BookPinnedRole =
   | 'factory' | 'pad' | 'settler' | 'lpFees' | 'locker' | 'lockerV4' | 'operatorNft' | 'accountImplementation'
-  | 'uniswapAdapter' | 'mancerAdapter' | 'bookAnvilFactory'
+  | 'uniswapAdapter' | 'mancerAdapter' | 'bookAnvilFactory' | 'padRegistry' | 'stonkPerpsAdapter'
 
 export function bookPinnedContracts(d: BookDeployment): Array<{ role: BookPinnedRole; pin: CodePinned }> {
   const out: Array<{ role: BookPinnedRole; pin: CodePinned }> = [
@@ -368,6 +508,8 @@ export function bookPinnedContracts(d: BookDeployment): Array<{ role: BookPinned
   )
   if (d.adapters.mancer) out.push({ role: 'mancerAdapter', pin: d.adapters.mancer })
   if (d.bookAnvilFactory) out.push({ role: 'bookAnvilFactory', pin: d.bookAnvilFactory })
+  if (d.padRegistry) out.push({ role: 'padRegistry', pin: d.padRegistry })
+  if (d.stonkPerpsAdapter) out.push({ role: 'stonkPerpsAdapter', pin: d.stonkPerpsAdapter })
   return out
 }
 
@@ -452,11 +594,30 @@ export function bookExpectedReads(d: BookDeployment): BookExpectedRead[] {
     add('bookAnvilFactory', a, abis.anvilFactory, 'protocolTreasury', e.bookAnvil.protocolTreasury)
     add('bookAnvilFactory', a, abis.anvilFactory, 'ethUsdFeed', e.bookAnvil.ethUsdFeed)
   }
+  if (BOOK_ABI_RULES[d.abiSet].pad === 'claims') {
+    if (e.padVersion === undefined) throw new Error(`deployment ${d.label} has a claims pad and names no PAD_VERSION`)
+    add('pad', d.pad.address, abis.pad, 'PAD_VERSION', e.padVersion)
+  }
+  if (d.padRegistry) {
+    if (!e.padRegistryOwner) throw new Error(`deployment ${d.label} names a pad registry without its owner`)
+    add('padRegistry', d.padRegistry.address, BOOK_ABIS['books-4e07ea0'].padRegistry, 'owner', e.padRegistryOwner)
+  }
+  if (d.stonkPerpsAdapter) {
+    const p = e.stonkPerps
+    if (!p) throw new Error(`deployment ${d.label} names StonkBrokers' perps adapter without its expected immutables`)
+    const s = d.stonkPerpsAdapter.address
+    const abi = BOOK_ABIS['books-4e07ea0'].stonkPerpsAdapter
+    add('stonkPerpsAdapter', s, abi, 'factory', p.factory)
+    add('stonkPerpsAdapter', s, abi, 'weth', p.weth)
+    add('stonkPerpsAdapter', s, abi, 'operator', p.operator)
+    add('stonkPerpsAdapter', s, abi, 'accountImpl', p.accountImpl)
+    add('stonkPerpsAdapter', s, abi, 'testMode', p.testMode)
+  }
   return reads
 }
 
 export function bookStorageReads(d: BookDeployment): BookExpectedRead[] {
-  const books = BOOK_ABIS.books
+  const books = bookAbisFor(d)
   const e = d.expected
   const f = d.factory.address
   const reads: BookExpectedRead[] = []
@@ -464,9 +625,14 @@ export function bookStorageReads(d: BookDeployment): BookExpectedRead[] {
     reads.push({ label, role, address, abi, functionName, args, expected, ...(output === undefined ? {} : { output }), ...(anyOf ? { anyOf } : {}) })
   }
   add('factory', f, books.factory, 'modulesLocked', [], true, 'factory.modulesLocked()')
-  add('factory', f, books.factory, 'adapterBootstrapSealed', [], true, 'factory.adapterBootstrapSealed()')
+  add('factory', f, books.factory, 'adapterBootstrapSealed', [], e.bootstrapSealed ?? true, 'factory.adapterBootstrapSealed()')
   add('factory', f, books.factory, 'isAdapter', [d.adapters.uniswap.address], true, `factory.isAdapter(${d.adapters.uniswap.address.toLowerCase()})`)
   if (d.adapters.mancer) add('factory', f, books.factory, 'isAdapter', [d.adapters.mancer.address], true, `factory.isAdapter(${d.adapters.mancer.address.toLowerCase()})`)
+  if (d.stonkPerpsAdapter && e.stonkPerps) {
+    const s = d.stonkPerpsAdapter.address
+    add('factory', f, books.factory, 'isAdapter', [s], true, `factory.isAdapter(${s.toLowerCase()})`)
+    add('stonkPerpsAdapter', s, BOOK_ABIS['books-4e07ea0'].stonkPerpsAdapter, 'bridge', [], e.stonkPerps.bridge, 'stonkPerpsAdapter.bridge()')
+  }
   for (const spender of d.orderSpenders) add('factory', f, books.factory, 'isSpender', [spender], true, `factory.isSpender(${spender.toLowerCase()})`)
   if (e.mancerSigner) add('factory', f, books.factory, 'mancerSigner', [], e.mancerSigner, 'factory.mancerSigner()')
   if (e.minDurationSecs !== undefined) add('factory', f, books.factory, 'minDurationSecs', [], e.minDurationSecs, 'factory.minDurationSecs()')

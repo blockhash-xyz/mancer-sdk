@@ -18,13 +18,16 @@ const E = 10n ** 18n
 const quote = { adapter: getAddress('0x' + 'ad'.repeat(20)), tokenIn: PONS, tokenOut: WETH, amountIn: 10n * E, minOut: 4n * 10n ** 15n, route: ('0x' + 'ab'.repeat(40)) as Hex, deadline: 4_000_000_000n, salt: 76n }
 
 test("a vault quote's digest is its MancerQuote under the vault's own domain, and every field of the quote moves it", () => {
-  const d = bookQuoteDigest(VAULT, quote)
+  // the pinned deployments sign under two names (the Books contracts' and v2c's), so a bare vault names its own
+  const digest = (vault: Address, q: typeof quote) => bookQuoteDigest(vault, q, 4663, BOOK_EIP712_NAME)
+  const d = digest(VAULT, quote)
   assert.equal(d, hashBookQuote({ name: BOOK_EIP712_NAME, version: BOOK_EIP712_VERSION, chainId: 4663, verifyingContract: VAULT }, quote))
-  assert.equal(bookQuoteDigest(VAULT.toLowerCase() as Address, { ...quote, tokenIn: PONS.toLowerCase() as Address }), d, 'an address in any case is the same quote')
+  assert.equal(digest(VAULT.toLowerCase() as Address, { ...quote, tokenIn: PONS.toLowerCase() as Address }), d, 'an address in any case is the same quote')
   for (const other of [{ deadline: quote.deadline + 1n }, { minOut: quote.minOut - 1n }, { route: ('0x' + 'ac'.repeat(40)) as Hex }, { salt: 77n }]) {
-    assert.notEqual(bookQuoteDigest(VAULT, { ...quote, ...other }), d, JSON.stringify(other, (_k, v) => (typeof v === 'bigint' ? v.toString() : v)))
+    assert.notEqual(digest(VAULT, { ...quote, ...other }), d, JSON.stringify(other, (_k, v) => (typeof v === 'bigint' ? v.toString() : v)))
   }
-  assert.notEqual(bookQuoteDigest(getAddress('0x' + 'bc'.repeat(20)), quote), d, "another vault's domain")
+  assert.notEqual(digest(getAddress('0x' + 'bc'.repeat(20)), quote), d, "another vault's domain")
+  assert.throws(() => bookQuoteDigest(VAULT, quote), /more than one EIP-712 name/, 'a bare vault with no name is refused')
 })
 
 /** A chain that answers the settler's, the factory's and the vault's reads, and each token's balance by holder. */
